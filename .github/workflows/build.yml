@@ -33,7 +33,7 @@ jobs:
 
     - name: Build Uninstaller
       run: |
-        csc /nologo /target:winexe /r:System.Windows.Forms.dll /r:System.Drawing.dll /out:Installer\Uninstall.exe Installer\UninstallProgram.cs
+        msbuild Installer\Uninstall.csproj /p:Configuration=Release /p:Platform=x64 /v:minimal
 
     - name: Build Graphical Installer (Setup)
       run: |

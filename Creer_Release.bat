@@ -29,7 +29,7 @@ copy /y "bin\IpScanConnect.exe" "IpScanConnect.exe" >nul
 
 :: 2. Compilation du Desinstalleur
 echo [2/4] Compilation du Desinstalleur Uninstall.exe...
-%CSC% /nologo /target:winexe /r:System.Windows.Forms.dll /r:System.Drawing.dll /out:Installer\Uninstall.exe Installer\UninstallProgram.cs
+%MSBUILD% Installer\Uninstall.csproj /p:Configuration=Release /p:Platform=x64 /v:minimal
 if %errorlevel% neq 0 (
     echo [ERREUR] Echec compilation Uninstall.exe.
     pause
