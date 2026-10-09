@@ -1,0 +1,481 @@
+<Window x:Class="IpScanConnect.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="IpScanConnect - Moniteur Réseau &amp; Pare-feu"
+        Height="650" Width="1060" MinHeight="480" MinWidth="800"
+        WindowStartupLocation="CenterScreen"
+        Background="#0A0C14" Foreground="#E2E8F0"
+        FontFamily="Segoe UI">
+
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis"/>
+
+        <!-- Couleurs de thème sombre -->
+        <SolidColorBrush x:Key="BgDark" Color="#0A0C14"/>
+        <SolidColorBrush x:Key="CardBg" Color="#131622"/>
+        <SolidColorBrush x:Key="CardHeaderBg" Color="#181C2C"/>
+        <SolidColorBrush x:Key="CardBorder" Color="#22283C"/>
+        <SolidColorBrush x:Key="AccentBlue" Color="#3B82F6"/>
+        <SolidColorBrush x:Key="AccentRed" Color="#EF4444"/>
+        <SolidColorBrush x:Key="AccentGreen" Color="#10B981"/>
+        <SolidColorBrush x:Key="TextMuted" Color="#8492A6"/>
+        <SolidColorBrush x:Key="TextLight" Color="#F8FAFC"/>
+
+        <!-- Style des Boutons Standards -->
+        <Style TargetType="Button">
+            <Setter Property="Background" Value="#181D2C"/>
+            <Setter Property="Foreground" Value="#E2E8F0"/>
+            <Setter Property="BorderBrush" Value="#28324C"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="10,5"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="5" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#252D44"/>
+                    <Setter Property="BorderBrush" Value="#3B82F6"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- Style Bouton Bloquer (Rouge) -->
+        <Style x:Key="BtnBlockRed" TargetType="Button">
+            <Setter Property="Background" Value="#991B1B"/>
+            <Setter Property="Foreground" Value="#FFFFFF"/>
+            <Setter Property="BorderBrush" Value="#DC2626"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="9,4"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="4" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#DC2626"/>
+                    <Setter Property="BorderBrush" Value="#EF4444"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- Style Bouton Couper (Gris) -->
+        <Style x:Key="BtnCutGray" TargetType="Button">
+            <Setter Property="Background" Value="#1E2337"/>
+            <Setter Property="Foreground" Value="#94A3B8"/>
+            <Setter Property="BorderBrush" Value="#2F3854"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="8,3"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="4" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#334155"/>
+                    <Setter Property="Foreground" Value="#FFFFFF"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- Style DataGrid -->
+        <Style TargetType="DataGrid">
+            <Setter Property="Background" Value="#131622"/>
+            <Setter Property="Foreground" Value="#E2E8F0"/>
+            <Setter Property="RowBackground" Value="#131622"/>
+            <Setter Property="AlternatingRowBackground" Value="#161A28"/>
+            <Setter Property="HorizontalGridLinesBrush" Value="#1E2337"/>
+            <Setter Property="VerticalGridLinesBrush" Value="Transparent"/>
+            <Setter Property="BorderBrush" Value="#22283C"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CanUserAddRows" Value="False"/>
+            <Setter Property="CanUserDeleteRows" Value="False"/>
+            <Setter Property="IsReadOnly" Value="True"/>
+            <Setter Property="SelectionMode" Value="Single"/>
+            <Setter Property="AutoGenerateColumns" Value="False"/>
+            <Setter Property="GridLinesVisibility" Value="Horizontal"/>
+        </Style>
+
+        <Style TargetType="DataGridColumnHeader">
+            <Setter Property="Background" Value="#181C2C"/>
+            <Setter Property="Foreground" Value="#94A3B8"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="Padding" Value="8,6"/>
+            <Setter Property="BorderThickness" Value="0,0,0,1"/>
+            <Setter Property="BorderBrush" Value="#22283C"/>
+        </Style>
+
+        <Style TargetType="DataGridCell">
+            <Setter Property="Padding" Value="6,5"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="DataGridCell">
+                        <Border Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter VerticalAlignment="Center"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Background" Value="#1E3A8A"/>
+                    <Setter Property="Foreground" Value="#FFFFFF"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- Style Onglets -->
+        <Style TargetType="TabControl">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+        </Style>
+        <Style TargetType="TabItem">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="#8492A6"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Padding" Value="12,6"/>
+            <Setter Property="Margin" Value="0,0,4,0"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TabItem">
+                        <Border x:Name="TabBorder" Background="{TemplateBinding Background}" CornerRadius="5" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter ContentSource="Header" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="TabBorder" Property="Background" Value="#181C2C"/>
+                                <Setter Property="Foreground" Value="#60A5FA"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Foreground" Value="#E2E8F0"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="12,10,12,10">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- 1. EN-TÊTE FIN ET COMPACT (TOUJOURS VISIBLE SANS DÉBORDEMENT) -->
+        <Grid Grid.Row="0" Margin="0,0,0,8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- Titre Principal -->
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock Text="🛡️" FontSize="18" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                <TextBlock Text="IpScanConnect" FontSize="16" FontWeight="Bold" Foreground="#FFFFFF" VerticalAlignment="Center"/>
+                <TextBlock Text="• Moniteur Réseau" FontSize="11" Foreground="#64748B" VerticalAlignment="Center" Margin="8,0,0,0"/>
+            </StackPanel>
+
+            <!-- Badges KPI Compacts et Lisibles -->
+            <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                <!-- Apps -->
+                <Border Background="#131622" BorderBrush="#22283C" BorderThickness="1" CornerRadius="6" Padding="8,4" Margin="3,0">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="🌐 Apps : " FontSize="11" Foreground="#8492A6"/>
+                        <TextBlock x:Name="TxtTotalApps" Text="0" FontSize="11" FontWeight="Bold" Foreground="#60A5FA"/>
+                    </StackPanel>
+                </Border>
+                <!-- Flux -->
+                <Border Background="#131622" BorderBrush="#22283C" BorderThickness="1" CornerRadius="6" Padding="8,4" Margin="3,0">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="📡 Flux : " FontSize="11" Foreground="#8492A6"/>
+                        <TextBlock x:Name="TxtTotalConnections" Text="0" FontSize="11" FontWeight="Bold" Foreground="#34D399"/>
+                    </StackPanel>
+                </Border>
+                <!-- Bloqués -->
+                <Border Background="#131622" BorderBrush="#22283C" BorderThickness="1" CornerRadius="6" Padding="8,4" Margin="3,0">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="🛑 Bloqués : " FontSize="11" Foreground="#8492A6"/>
+                        <TextBlock x:Name="TxtBlockedSummary" Text="0" FontSize="11" FontWeight="Bold" Foreground="#F87171"/>
+                    </StackPanel>
+                </Border>
+                <!-- Moteur -->
+                <Border Background="#131622" BorderBrush="#22283C" BorderThickness="1" CornerRadius="6" Padding="8,4" Margin="3,0">
+                    <TextBlock x:Name="TxtEngineStatus" Text="🟢 WFP Natif" FontSize="11" FontWeight="Bold" Foreground="#A78BFA"/>
+                </Border>
+            </StackPanel>
+        </Grid>
+
+        <!-- 2. BARRE D'OUTILS COMPACTE -->
+        <Border Grid.Row="1" Background="#131622" BorderBrush="#22283C" BorderThickness="1" CornerRadius="7" Padding="8,6" Margin="0,0,0,8">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="280"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- Champ de Recherche Direct -->
+                <TextBox x:Name="TxtSearch" Grid.Column="0" Height="28" Padding="6,3" FontSize="12"
+                         Background="#0A0C14" Foreground="#FFFFFF" BorderBrush="#2D3550"
+                         VerticalContentAlignment="Center" TextChanged="TxtSearch_TextChanged"
+                         ToolTip="Filtrer en direct par application, IP, port, domaine..."/>
+
+                <!-- Bascule de Vue -->
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="10,0,0,0">
+                    <Button x:Name="BtnGroupApps" Content="📦 Par Application" Margin="2,0" Background="#2563EB" Click="BtnGroupApps_Click"
+                            ToolTip="Affiche chaque application comme une carte repliée"/>
+                    <Button x:Name="BtnGroupCategories" Content="📁 Par Type" Margin="2,0" Click="BtnGroupCategories_Click"
+                            ToolTip="Groupe par Utilisateur, Système et En Écoute"/>
+                </StackPanel>
+
+                <!-- Boutons Déplier / Replier / Rafraîchir -->
+                <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button x:Name="BtnExpandAll" Content="➕ Tout déplier" Margin="2,0" Click="BtnExpandAll_Click"/>
+                    <Button x:Name="BtnCollapseAll" Content="➖ Tout replier" Margin="2,0" Click="BtnCollapseAll_Click"/>
+                    <Button x:Name="BtnRefreshNow" Content="🔄 Actualiser" Margin="4,0,0,0" Click="BtnRefreshNow_Click"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- 3. CONTENU CENTRAL (ONGLETS) -->
+        <TabControl Grid.Row="2" x:Name="MainTabs">
+
+            <!-- VUE 1 : CATÉGORIES APLATIES PAR DÉFAUT -->
+            <TabItem Header="🌐 Connexions Réseau (Dépliables)">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Margin="0,4,0,0">
+                    <ItemsControl x:Name="ListProcessGroups">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <!-- CARTE D'APPLICATION APLATIE PAR DÉFAUT -->
+                                <Border Background="#131622" BorderBrush="#22283C" BorderThickness="1" CornerRadius="8" Margin="0,0,0,6">
+                                    <Grid>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="*"/>
+                                        </Grid.RowDefinitions>
+
+                                        <!-- EN-TÊTE CLIQUABLE DE LA CARTE (HAUTEUR MINIMALE & NETTE) -->
+                                        <Border Grid.Row="0" Background="#181C2C" CornerRadius="8,8,0,0" Padding="10,8" Cursor="Hand"
+                                                MouseLeftButtonUp="GroupHeader_MouseLeftButtonUp" Tag="{Binding}">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+
+                                                <!-- Indicateur Chevron Déplié / Replié -->
+                                                <TextBlock Grid.Column="0" Text="{Binding ChevronIcon}" FontSize="13" FontWeight="Bold"
+                                                           Foreground="{Binding ChevronColor}" VerticalAlignment="Center" Margin="0,0,8,0" Width="14"/>
+
+                                                <!-- Icône Emoji -->
+                                                <Border Grid.Column="1" Background="#1E2438" Width="28" Height="28" CornerRadius="6" Margin="0,0,10,0" VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding IconEmoji}" FontSize="15" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                </Border>
+
+                                                <!-- Nom & Sous-titre -->
+                                                <StackPanel Grid.Column="2" VerticalAlignment="Center">
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <TextBlock Text="{Binding ProcessName}" FontSize="13" FontWeight="Bold" Foreground="#F8FAFC" Margin="0,0,8,0"/>
+                                                        <Border Background="#1E293B" CornerRadius="3" Padding="5,1" VerticalAlignment="Center">
+                                                            <TextBlock Text="{Binding Category}" FontSize="9" FontWeight="SemiBold" Foreground="#94A3B8"/>
+                                                        </Border>
+                                                    </StackPanel>
+                                                    <TextBlock Text="{Binding SubtitleDisplay}" FontSize="10" Foreground="#64748B" TextTrimming="CharacterEllipsis" Margin="0,1,0,0"/>
+                                                </StackPanel>
+
+                                                <!-- Badge Compteur de Flux -->
+                                                <Border Grid.Column="3" Background="#1E293B" BorderBrush="#334155" BorderThickness="1" CornerRadius="10" Padding="8,3" Margin="0,0,10,0" VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding CountBadge}" FontSize="10" FontWeight="Bold" Foreground="#60A5FA"/>
+                                                </Border>
+
+                                                <!-- Bouton Bloquer Toute l'App -->
+                                                <Button Grid.Column="4" Content="🚫 Bloquer l'App" Style="{StaticResource BtnBlockRed}" VerticalAlignment="Center"
+                                                        Click="BtnBlockAppFromGroup_Click" Tag="{Binding}"
+                                                        ToolTip="Bloque immédiatement tout accès réseau pour cette application"/>
+                                            </Grid>
+                                        </Border>
+
+                                        <!-- CONTENU DÉPLIÉ (VISIBLE UNIQUEMENT QUAND CLIQUÉ) -->
+                                        <Border Grid.Row="1" Background="#0C0E17" CornerRadius="0,0,8,8" BorderThickness="0,1,0,0" BorderBrush="#1E2337"
+                                                Padding="8,6" Visibility="{Binding IsExpanded, Converter={StaticResource BoolToVis}}">
+                                            <ItemsControl ItemsSource="{Binding Connections}">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <!-- LIGNE DE FLUX -->
+                                                        <Border Background="#131622" BorderBrush="#1C2133" BorderThickness="1" CornerRadius="5" Padding="10,6" Margin="0,0,0,4">
+                                                            <Grid>
+                                                                <Grid.ColumnDefinitions>
+                                                                    <ColumnDefinition Width="Auto"/>
+                                                                    <ColumnDefinition Width="340"/>
+                                                                    <ColumnDefinition Width="160"/>
+                                                                    <ColumnDefinition Width="65"/>
+                                                                    <ColumnDefinition Width="120"/>
+                                                                    <ColumnDefinition Width="*"/>
+                                                                    <ColumnDefinition Width="Auto"/>
+                                                                </Grid.ColumnDefinitions>
+
+                                                                <!-- Pastille d'état -->
+                                                                <Border Grid.Column="0" Width="8" Height="8" CornerRadius="4" Background="{Binding StatusColor}" VerticalAlignment="Center" Margin="0,0,10,0"/>
+
+                                                                <!-- Destination (Hôte / IP / Port) -->
+                                                                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                                                    <TextBlock Text="{Binding DestinationTitle}" FontSize="12" FontWeight="Bold" Foreground="#F1F5F9" TextTrimming="CharacterEllipsis"/>
+                                                                    <TextBlock Text="{Binding DestinationSubtitle}" FontSize="10" Foreground="#60A5FA" Margin="0,1,0,0"/>
+                                                                </StackPanel>
+
+                                                                <!-- Local Endpoint -->
+                                                                <StackPanel Grid.Column="2" VerticalAlignment="Center">
+                                                                    <TextBlock Text="Local :" FontSize="9" Foreground="#64748B"/>
+                                                                    <TextBlock Text="{Binding LocalDisplay}" FontSize="11" Foreground="#CBD5E1"/>
+                                                                </StackPanel>
+
+                                                                <!-- Protocole -->
+                                                                <Border Grid.Column="3" Background="#1E293B" CornerRadius="3" Padding="5,1" HorizontalAlignment="Left" VerticalAlignment="Center">
+                                                                    <TextBlock Text="{Binding Protocol}" FontSize="9" FontWeight="Bold" Foreground="#94A3B8"/>
+                                                                </Border>
+
+                                                                <!-- Statut -->
+                                                                <TextBlock Grid.Column="4" Text="{Binding StatusDisplay}" FontSize="10" FontWeight="SemiBold" VerticalAlignment="Center"/>
+
+                                                                <!-- Actions Rapides -->
+                                                                <StackPanel Grid.Column="6" Orientation="Horizontal" VerticalAlignment="Center">
+                                                                    <Button Content="🛑 Bloquer IP" Style="{StaticResource BtnBlockRed}" Margin="0,0,4,0"
+                                                                            Click="BtnBlockIpFromRow_Click" Tag="{Binding}"
+                                                                            ToolTip="Interdit cette adresse IP pour toute la machine"/>
+                                                                    <Button Content="❌ Couper" Style="{StaticResource BtnCutGray}"
+                                                                            Click="BtnCloseTcpFromRow_Click" Tag="{Binding}"
+                                                                            ToolTip="Réinitialise immédiatement la connexion TCP (Reset)"/>
+                                                                </StackPanel>
+                                                            </Grid>
+                                                        </Border>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </Border>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </TabItem>
+
+            <!-- VUE 2 : RÈGLES DE BLOCAGE ACTIVES -->
+            <TabItem Header="🛡️ Règles de Blocage">
+                <Grid Margin="0,6,0,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <Border Grid.Row="0" Background="#131622" BorderBrush="#22283C" BorderThickness="1" CornerRadius="7" Padding="10" Margin="0,0,0,8">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Orientation="Horizontal">
+                                <Button Content="+ Bloquer une IP manuellement" Margin="0,0,8,0" Background="#DC2626" Click="BtnManualBlockIp_Click"/>
+                                <Button Content="+ Bloquer une Application (.exe)" Margin="0,0,8,0" Background="#D97706" Click="BtnManualBlockApp_Click"/>
+                            </StackPanel>
+
+                            <StackPanel Grid.Column="2" Orientation="Horizontal">
+                                <Button Content="🔓 Débloquer la sélection" Margin="0,0,8,0" Click="BtnUnblockSelected_Click"/>
+                                <Button Content="🧹 Tout Débloquer" Background="#7F1D1D" Click="BtnUnblockAll_Click"/>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <DataGrid x:Name="GridRules" Grid.Row="1">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Type" Binding="{Binding RuleType}" Width="110" FontWeight="Bold"/>
+                            <DataGridTextColumn Header="Cible (IP ou Chemin .exe)" Binding="{Binding Target}" Width="*" FontWeight="SemiBold"/>
+                            <DataGridTextColumn Header="Direction" Binding="{Binding Direction}" Width="150"/>
+                            <DataGridTextColumn Header="Nom de la règle" Binding="{Binding RuleName}" Width="240"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </Grid>
+            </TabItem>
+
+            <!-- VUE 3 : JOURNAL -->
+            <TabItem Header="📜 Journal des Événements">
+                <Grid Margin="0,6,0,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <Border Grid.Row="0" Background="#131622" BorderBrush="#22283C" BorderThickness="1" CornerRadius="7" Padding="8" Margin="0,0,0,8">
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                            <Button Content="Effacer le journal" Margin="0,0,8,0" Click="BtnClearLogs_Click"/>
+                            <Button Content="Exporter en fichier texte" Click="BtnExportLogs_Click"/>
+                        </StackPanel>
+                    </Border>
+
+                    <DataGrid x:Name="GridLogs" Grid.Row="1">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Heure" Binding="{Binding TimeDisplay}" Width="85"/>
+                            <DataGridTextColumn Header="Événement" Binding="{Binding EventType}" Width="150" FontWeight="Bold"/>
+                            <DataGridTextColumn Header="Application" Binding="{Binding ProcessName}" Width="170"/>
+                            <DataGridTextColumn Header="Cible" Binding="{Binding Target}" Width="200" FontWeight="SemiBold"/>
+                            <DataGridTextColumn Header="Détails" Binding="{Binding Details}" Width="*"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </Grid>
+            </TabItem>
+        </TabControl>
+
+        <!-- 4. PIED DE PAGE DISCRET -->
+        <Border Grid.Row="3" Background="#131622" BorderBrush="#22283C" BorderThickness="1" CornerRadius="5" Margin="0,6,0,0" Padding="8,4">
+            <Grid>
+                <TextBlock x:Name="TxtStatusBar" Text="Prêt. Surveillance réseau active." Foreground="#8492A6" FontSize="11" VerticalAlignment="Center"/>
+                <TextBlock x:Name="TxtLastUpdate" Text="Dernière mise à jour: --:--:--" Foreground="#64748B" FontSize="10" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

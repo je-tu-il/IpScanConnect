@@ -1,0 +1,37 @@
+Created Ioctl.h
+Edited Driver.h
+Created Communication.c
+Edited DriverEntry.c
+Created ServiceHelper.cpp
+Created sources
+
+**Fichiers générés :**
+1. `Shared\Ioctl.h` : Structures et codes IOCTL (`IOCTL_IPSCAN_ADD_RULE`).
+2. `Driver\Communication.c` : Traitement `EvtIoDeviceControl` sécurisé.
+3. `Driver\Driver.h` & `DriverEntry.c` : Modifications pour `WdfDeviceCreateSymbolicLink` et création de `WDFQUEUE`.
+4. `Service\ServiceHelper.cpp` : Test `DeviceIoControl` user-mode.
+5. `Driver\sources` : Configuration de build (WDK Build) ciblant `Fwpsk.lib`.
+
+***
+
+**Protocole de Test Strict**
+
+**1. Compilation (EWDK)**
+- Ouvrez l'invite de commande de l'Enterprise WDK.
+- Naviguez vers `e:\Reste\Faut_trier\PROJET_PERSO\IpScanConnect\Driver`.
+- Exécutez : `build -cZ` (si utilisation du système `sources`) ou via `msbuild IpScanConnect.vcxproj /p:Configuration=Debug /p:Platform=x64` (si utilisation Vcxproj moderne).
+- Pour le service user-mode : `cl /EHsc ServiceHelper.cpp Fwpuclnt.lib`
+
+**2. Chargement en VM TestSigning**
+- Sur la VM, dans un CMD admin : `bcdedit /set testsigning on` et redémarrez.
+- Copiez `IpScanConnect.sys` sur la VM.
+- Enregistrez le driver : `sc create IpScanConnect type= kernel binPath= "C:\path\to\IpScanConnect.sys"`
+- Activez le driver : `sc start IpScanConnect`
+
+**3. Vérification (DebugPrint & IOCTL)**
+- Lancez **DbgView** sur la VM en tant qu'administrateur. Activez `Capture Kernel`.
+- (Alternative) Si KDNET configuré : connectez **WinDbg** depuis l'hôte, activez les logs WPP ou KdPrint via la macro (ex: `ed Kd_DEFAULT_Mask 8`).
+- Exécutez `ServiceHelper.exe`.
+- Vérifiez dans DbgView/WinDbg l'apparition stricte des traces : 
+  - `WFP IPC: Rule Received - IP: [...], PID: [...], Block: 1`
+  - `WFP: PID [...] Connect to IP [...]` (Dès qu'une connexion réseau est initiée par la VM).

@@ -1,0 +1,35 @@
+# Build results
+[Bb]in/
+[Oo]bj/
+*.exe.old
+*.old.exe
+
+# Visual Studio / MSBuild files
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.userprefs
+
+# Windows Driver Kit (WDK) Build artifacts
+*.sys
+*.cer
+*.cat
+*.inf
+*.log
+*.tlog
+*.lastcodeanalysissucceeded
+*.ipch
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*~
+Thumbs.db
+[Ee]xpress/
+
+# Crash dumps
+*.dmp
+*.mdmp
