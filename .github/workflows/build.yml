@@ -23,27 +23,53 @@ jobs:
       run: |
         msbuild App\IpScanConnect.csproj /p:Configuration=Release /p:Platform=x64 /v:minimal
 
-    - name: Prepare Artifact Package
+    - name: Copy Main Executable for Installer Embedding
       shell: pwsh
       run: |
-        New-Item -ItemType Directory -Path "dist\IpScanConnect" -Force | Out-Null
-        Copy-Item "bin\IpScanConnect.exe" "dist\IpScanConnect\" -Force
-        Copy-Item "Lancer_IpScanConnect.bat" "dist\IpScanConnect\" -Force
-        Copy-Item "README.md" "dist\IpScanConnect\" -Force
-        Copy-Item "LICENSE" "dist\IpScanConnect\" -Force
-        Compress-Archive -Path "dist\IpScanConnect\*" -DestinationPath "IpScanConnect-Windows-x64.zip" -Force
+        Copy-Item "bin\IpScanConnect.exe" "IpScanConnect.exe" -Force
 
-    - name: Upload Build Artifact
+    - name: Build Uninstaller
+      run: |
+        csc /nologo /target:winexe /r:System.Windows.Forms.dll /r:System.Drawing.dll /out:Installer\Uninstall.exe Installer\UninstallProgram.cs
+
+    - name: Build Graphical Installer (Setup)
+      run: |
+        msbuild Installer\IpScanConnect_Setup.csproj /p:Configuration=Release /p:Platform=x64 /v:minimal
+
+    - name: Prepare Release Packages
+      shell: pwsh
+      run: |
+        New-Item -ItemType Directory -Path "Release" -Force | Out-Null
+        Copy-Item "bin\IpScanConnect_Setup.exe" "Release\IpScanConnect_Setup_v1.0.exe" -Force
+
+        # Package Portable ZIP
+        New-Item -ItemType Directory -Path "dist_temp\IpScanConnect_v1.0_Portable" -Force | Out-Null
+        Copy-Item "IpScanConnect.exe" "dist_temp\IpScanConnect_v1.0_Portable\" -Force
+        Copy-Item "Lancer_IpScanConnect.bat" "dist_temp\IpScanConnect_v1.0_Portable\" -Force
+        Copy-Item "README.md" "dist_temp\IpScanConnect_v1.0_Portable\" -Force
+        Copy-Item "LICENSE" "dist_temp\IpScanConnect_v1.0_Portable\" -Force
+        Compress-Archive -Path "dist_temp\IpScanConnect_v1.0_Portable\*" -DestinationPath "Release\IpScanConnect-v1.0-Portable.zip" -Force
+        Remove-Item -Recurse -Force "dist_temp"
+
+    - name: Upload Installer Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: IpScanConnect-Windows-x64
-        path: IpScanConnect-Windows-x64.zip
+        name: IpScanConnect-Setup
+        path: Release/IpScanConnect_Setup_v1.0.exe
+
+    - name: Upload Portable Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: IpScanConnect-Portable
+        path: Release/IpScanConnect-v1.0-Portable.zip
 
     - name: Create GitHub Release
       if: startsWith(github.ref, 'refs/tags/')
       uses: softprops/action-gh-release@v2
       with:
-        files: IpScanConnect-Windows-x64.zip
+        files: |
+          Release/IpScanConnect_Setup_v1.0.exe
+          Release/IpScanConnect-v1.0-Portable.zip
         generate_release_notes: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

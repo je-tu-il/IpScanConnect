@@ -11,12 +11,21 @@ Conçu pour fonctionner de manière fluide et autonome, sans risque de plantage 
 
 ---
 
-## 🚀 Lancement Rapide (1 Clic)
+## 🚀 Installation & Utilisation
 
-Pour lancer l'application avec les privilèges réseau nécessaires :
-1. Double-cliquez sur **`Lancer_IpScanConnect.bat`** (ou directement sur **`IpScanConnect.exe`**).
-2. Acceptez la demande d'élévation Administrateur Windows (nécessaire pour inspecter les connexions et appliquer le filtrage réseau).
-3. L'interface graphique moderne s'ouvre immédiatement !
+Deux packages d'installation propres sont mis à disposition dans le dossier [`Release/`](file:///e:/Reste/PROJET_PERSO/IpScanConnect/Release/) et sur les **Releases GitHub** :
+
+### Option 1 : Installateur Windows Complet (Recommandé)
+1. Téléchargez et lancez **`IpScanConnect_Setup_v1.0.exe`**.
+2. L'assistant graphique vous permet de choisir votre dossier de destination (`C:\Program Files\IpScanConnect` par défaut).
+3. Il crée automatiquement :
+   - Un raccourci sur le **Bureau**
+   - Un raccourci dans le **Menu Démarrer**
+   - Une entrée dans les **Applications et Fonctionnalités** de Windows pour une désinstallation propre à tout moment.
+
+### Option 2 : Version Portable (Sans Installation)
+1. Téléchargez et décompressez **`IpScanConnect_v1.0_Portable.zip`**.
+2. Double-cliquez sur **`IpScanConnect.exe`** ou **`Lancer_IpScanConnect.bat`** pour l'utiliser immédiatement sans aucune installation requise.
 
 ---
 
