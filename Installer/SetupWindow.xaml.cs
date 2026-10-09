@@ -100,7 +100,6 @@ namespace IpScanConnect.Installer
             // 1. Extraction des fichiers embarqués
             ExtractResource(assembly, "IpScanConnect.exe", Path.Combine(targetDir, "IpScanConnect.exe"));
             ExtractResource(assembly, "Uninstall.exe", Path.Combine(targetDir, "Uninstall.exe"));
-            ExtractResource(assembly, "Lancer_IpScanConnect.bat", Path.Combine(targetDir, "Lancer_IpScanConnect.bat"));
             ExtractResource(assembly, "README.md", Path.Combine(targetDir, "README.md"));
 
             string mainExe = Path.Combine(targetDir, "IpScanConnect.exe");

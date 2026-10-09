@@ -1,6 +1,7 @@
 # Build results
 [Bb]in/
 [Oo]bj/
+[Rr]elease/
 *.exe.old
 *.old.exe
 

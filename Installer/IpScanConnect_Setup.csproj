@@ -63,9 +63,6 @@
     <EmbeddedResource Include="Uninstall.exe">
       <Link>Resources\Uninstall.exe</Link>
     </EmbeddedResource>
-    <EmbeddedResource Include="..\Lancer_IpScanConnect.bat">
-      <Link>Resources\Lancer_IpScanConnect.bat</Link>
-    </EmbeddedResource>
     <EmbeddedResource Include="..\README.md">
       <Link>Resources\README.md</Link>
     </EmbeddedResource>

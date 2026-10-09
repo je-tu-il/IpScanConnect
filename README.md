@@ -25,7 +25,7 @@ Deux packages d'installation propres sont mis à disposition dans le dossier [`R
 
 ### Option 2 : Version Portable (Sans Installation)
 1. Téléchargez et décompressez **`IpScanConnect_v1.0_Portable.zip`**.
-2. Double-cliquez sur **`IpScanConnect.exe`** ou **`Lancer_IpScanConnect.bat`** pour l'utiliser immédiatement sans aucune installation requise.
+2. Double-cliquez directement sur **`IpScanConnect.exe`** pour l'utiliser immédiatement sans aucune installation requise (les droits Administrateur sont automatiquement demandés).
 
 ---
 
@@ -114,7 +114,6 @@ graph TD
 | Fichier / Dossier | Rôle |
 | :--- | :--- |
 | **`IpScanConnect.exe`** | L'exécutable complet prêt à l'emploi (interface moderne WPF x64). |
-| **`Lancer_IpScanConnect.bat`** | Lanceur avec élévation automatique des droits Administrateur. |
 | **`App/`** | Code source complet C# / WPF du client graphique et des services. |
 | **`Shared/Ioctl.h`** | Définitions communes des IOCTLs et structures noyau/utilisateur. |
 | **`Driver/`** | Code source en C du pilote noyau WFP Callout (`Callout.c`, `Communication.c`, etc.). |

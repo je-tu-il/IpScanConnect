@@ -48,7 +48,6 @@ jobs:
         # Package Portable ZIP
         New-Item -ItemType Directory -Path "dist_temp\IpScanConnect_v1.0_Portable" -Force | Out-Null
         Copy-Item "IpScanConnect.exe" "dist_temp\IpScanConnect_v1.0_Portable\" -Force
-        Copy-Item "Lancer_IpScanConnect.bat" "dist_temp\IpScanConnect_v1.0_Portable\" -Force
         Copy-Item "README.md" "dist_temp\IpScanConnect_v1.0_Portable\" -Force
         Copy-Item "LICENSE" "dist_temp\IpScanConnect_v1.0_Portable\" -Force
         Compress-Archive -Path "dist_temp\IpScanConnect_v1.0_Portable\*" -DestinationPath "Release\IpScanConnect-v1.0-Portable.zip" -Force
