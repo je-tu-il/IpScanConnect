@@ -1,5 +1,7 @@
 # 🛡️ IpScanConnect - Moniteur Réseau & Pare-feu Sécurisé
 
+[![Release](https://img.shields.io/github/v/release/je-tu-il/IpScanConnect?color=blue&label=Version)](https://github.com/je-tu-il/IpScanConnect/releases/latest)
+[![Build & Release](https://github.com/je-tu-il/IpScanConnect/actions/workflows/build.yml/badge.svg)](https://github.com/je-tu-il/IpScanConnect/actions/workflows/build.yml)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011-0078D6?logo=windows&logoColor=white)](#)
 [![Framework](https://img.shields.io/badge/.NET%20Framework-4.8-512BD4?logo=dotnet&logoColor=white)](#)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -13,7 +15,7 @@ Conçu pour fonctionner de manière fluide et autonome, sans risque de plantage 
 
 ## 🚀 Installation & Utilisation
 
-Deux packages d'installation propres sont mis à disposition dans le dossier [`Release/`](file:///e:/Reste/PROJET_PERSO/IpScanConnect/Release/) et sur les **Releases GitHub** :
+Deux packages d'installation propres sont mis à disposition dans le dossier [`Release/`](https://github.com/je-tu-il/IpScanConnect/releases/latest) et sur les **Releases GitHub** :
 
 ### Option 1 : Installateur Windows Complet (Recommandé)
 1. Téléchargez et lancez **`IpScanConnect_Setup_v1.0.exe`**.
