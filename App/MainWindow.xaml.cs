@@ -8,7 +8,9 @@ using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Data;
 using System.Windows.Input;
+using System.Windows.Media;
 using System.Windows.Threading;
 using Microsoft.Win32;
 using IpScanConnect.Models;
@@ -19,29 +21,82 @@ namespace IpScanConnect
     public partial class MainWindow : Window
     {
         private readonly KernelDriverClient _driverClient;
+        private readonly SettingsService _settingsService;
         private readonly BlockRuleService _blockService;
         private readonly NetworkMonitorService _netMonitor;
+        private readonly HostsRedirectService _hostsRedirectService;
+        private readonly WfpAuditService _wfpAuditService;
+        private readonly GeminiAiService _geminiService;
 
         private readonly DispatcherTimer _refreshTimer;
         private readonly ObservableCollection<ProcessGroup> _displayedGroups = new ObservableCollection<ProcessGroup>();
         private readonly ObservableCollection<BlockedRule> _rulesList = new ObservableCollection<BlockedRule>();
+        private readonly ObservableCollection<BlockedAttempt> _blockedAttemptsList = new ObservableCollection<BlockedAttempt>();
+        private readonly ObservableCollection<RedirectRule> _redirectRulesList = new ObservableCollection<RedirectRule>();
         private readonly ObservableCollection<LogEvent> _logsList = new ObservableCollection<LogEvent>();
+        private readonly ObservableCollection<GeminiAnalysisResult> _aiHistoryList = new ObservableCollection<GeminiAnalysisResult>();
+
+        private ICollectionView _rulesView;
+        private ICollectionView _attemptsView;
+        private ICollectionView _redirectsView;
+        private ICollectionView _logsView;
+        private ICollectionView _aiHistoryView;
 
         private List<NetworkConnection> _rawConnections = new List<NetworkConnection>();
+        private readonly HashSet<string> _sessionAlertedApps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<string> _recentAttemptKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         private string _groupMode = "BY_APP"; // "BY_APP" ou "BY_CATEGORY"
+        private string _scopeFilter = "ALL"; // "ALL", "INTERNET", "LAN", "LOCAL"
+        private string _sortBy = "COUNT"; // "COUNT", "NAME", "SENT", "RECV", "TOTAL_BYTES", "PORTS"
+        private bool _sortDescending = true;
         private bool _isLoading = false;
+        private bool _isSyncingOptionsUi = false;
+        private bool _isKeyVisible = false;
+        private bool _forceExit = false;
+        private bool _trayHintShown = false;
+
+        private System.Windows.Forms.NotifyIcon _trayIcon;
+        private System.Windows.Forms.ToolStripMenuItem _trayWatchMenuItem;
+
+        private static readonly Brush InactiveBtnBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(24, 29, 44));
 
         public MainWindow()
         {
             InitializeComponent();
 
             _driverClient = new KernelDriverClient();
-            _blockService = new BlockRuleService(_driverClient);
+            _settingsService = new SettingsService();
+            _blockService = new BlockRuleService(_driverClient, _settingsService);
             _netMonitor = new NetworkMonitorService();
+            _hostsRedirectService = new HostsRedirectService();
+            _wfpAuditService = new WfpAuditService();
+            _geminiService = new GeminiAiService();
+
+            _blockService.SandboxExeAutoBlocked += BlockService_SandboxExeAutoBlocked;
 
             ListProcessGroups.ItemsSource = _displayedGroups;
+            ListTilesGroups.ItemsSource = _displayedGroups;
             GridRules.ItemsSource = _rulesList;
+            GridBlockedAttempts.ItemsSource = _blockedAttemptsList;
+            GridRedirects.ItemsSource = _redirectRulesList;
             GridLogs.ItemsSource = _logsList;
+            ListAiHistory.ItemsSource = _aiHistoryList;
+
+            _rulesView = CollectionViewSource.GetDefaultView(_rulesList);
+            _attemptsView = CollectionViewSource.GetDefaultView(_blockedAttemptsList);
+            _redirectsView = CollectionViewSource.GetDefaultView(_redirectRulesList);
+            _logsView = CollectionViewSource.GetDefaultView(_logsList);
+            _aiHistoryView = CollectionViewSource.GetDefaultView(_aiHistoryList);
+
+            _rulesView.Filter = FilterRuleItem;
+            _attemptsView.Filter = FilterAttemptItem;
+            _redirectsView.Filter = FilterRedirectItem;
+            _logsView.Filter = FilterLogItem;
+            _aiHistoryView.Filter = FilterAiHistoryItem;
+
+            InitializeTrayIcon();
+            LoadSettingsIntoUi();
 
             _refreshTimer = new DispatcherTimer();
             _refreshTimer.Interval = TimeSpan.FromSeconds(2);
@@ -53,53 +108,351 @@ namespace IpScanConnect
 
         private void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
-            // Ajustement automatique pour garantir que le haut de l'appli et la barre de titre soient toujours 100% accessibles
             double workAreaHeight = SystemParameters.WorkArea.Height;
             double workAreaWidth = SystemParameters.WorkArea.Width;
             if (Height > workAreaHeight - 30)
-            {
-                Height = Math.Max(460, workAreaHeight - 40);
-            }
+                Height = Math.Max(480, workAreaHeight - 40);
             if (Width > workAreaWidth - 30)
-            {
-                Width = Math.Max(780, workAreaWidth - 40);
-            }
+                Width = Math.Max(820, workAreaWidth - 40);
+
             Top = Math.Max(SystemParameters.WorkArea.Top, (workAreaHeight - Height) / 2 + SystemParameters.WorkArea.Top);
             Left = Math.Max(SystemParameters.WorkArea.Left, (workAreaWidth - Width) / 2 + SystemParameters.WorkArea.Left);
 
-            UpdateDriverStatusUI();
+            Task.Run(() => _blockService.InitializeSandboxedFolders());
             RefreshAll();
             _refreshTimer.Start();
-            AddLog("SYSTEME", "Surveillance réseau active (catégories aplaties)", "Système");
+            AddLog("SYSTEME", "Surveillance réseau active", "Système");
         }
 
-        private void UpdateDriverStatusUI()
+        public void ForceClose()
         {
-            if (_driverClient != null && _driverClient.IsDriverLoaded)
-            {
-                TxtEngineStatus.Text = "🟢 Pilote Kernel WFP";
-            }
-            else
-            {
-                TxtEngineStatus.Text = "🟢 WFP Natif Kernel";
-            }
+            _forceExit = true;
+            Close();
         }
 
         private void MainWindow_Closing(object sender, CancelEventArgs e)
         {
-            _refreshTimer.Stop();
-            if (_driverClient != null)
+            bool keepInTray = !_forceExit &&
+                              (_settingsService.Current.MinimizeToTrayOnClose || _settingsService.Current.WatchModeEnabled);
+
+            if (keepInTray)
             {
-                _driverClient.Dispose();
+                e.Cancel = true;
+                Hide();
+                if (!_trayHintShown && _trayIcon != null)
+                {
+                    _trayHintShown = true;
+                    _trayIcon.ShowBalloonTip(
+                        2500,
+                        "IpScanConnect",
+                        "La surveillance continue en arrière-plan dans les icônes cachées.",
+                        System.Windows.Forms.ToolTipIcon.Info);
+                }
+                return;
+            }
+
+            _refreshTimer.Stop();
+            if (_trayIcon != null)
+            {
+                _trayIcon.Visible = false;
+                _trayIcon.Dispose();
+                _trayIcon = null;
+            }
+            if (_blockService != null) _blockService.Dispose();
+            if (_driverClient != null) _driverClient.Dispose();
+        }
+
+        #region Systray & Watch Mode
+
+        private void InitializeTrayIcon()
+        {
+            try
+            {
+                System.Drawing.Icon appIcon = null;
+                try
+                {
+                    string exe = Process.GetCurrentProcess().MainModule.FileName;
+                    appIcon = System.Drawing.Icon.ExtractAssociatedIcon(exe);
+                }
+                catch { }
+                if (appIcon == null) appIcon = System.Drawing.SystemIcons.Shield;
+
+                _trayIcon = new System.Windows.Forms.NotifyIcon();
+                _trayIcon.Icon = appIcon;
+                _trayIcon.Text = "IpScanConnect — Surveillance réseau";
+                _trayIcon.Visible = true;
+                _trayIcon.DoubleClick += (s, e) => RestoreFromTray();
+
+                System.Windows.Forms.ContextMenuStrip menu = new System.Windows.Forms.ContextMenuStrip();
+                var openItem = new System.Windows.Forms.ToolStripMenuItem("Ouvrir IpScanConnect");
+                openItem.Font = new System.Drawing.Font(openItem.Font, System.Drawing.FontStyle.Bold);
+                openItem.Click += (s, e) => RestoreFromTray();
+
+                _trayWatchMenuItem = new System.Windows.Forms.ToolStripMenuItem("Mode Surveillance");
+                _trayWatchMenuItem.CheckOnClick = true;
+                _trayWatchMenuItem.Checked = _settingsService.Current.WatchModeEnabled;
+                _trayWatchMenuItem.Click += (s, e) =>
+                {
+                    Dispatcher.Invoke(() =>
+                    {
+                        ChkWatchMode.IsChecked = _trayWatchMenuItem.Checked;
+                    });
+                };
+
+                var exitItem = new System.Windows.Forms.ToolStripMenuItem("Quitter complètement");
+                exitItem.Click += (s, e) =>
+                {
+                    Dispatcher.Invoke(() =>
+                    {
+                        _forceExit = true;
+                        Close();
+                    });
+                };
+
+                menu.Items.Add(openItem);
+                menu.Items.Add(_trayWatchMenuItem);
+                menu.Items.Add(new System.Windows.Forms.ToolStripSeparator());
+                menu.Items.Add(exitItem);
+                _trayIcon.ContextMenuStrip = menu;
+            }
+            catch { }
+        }
+
+        private void RestoreFromTray()
+        {
+            Dispatcher.Invoke(() =>
+            {
+                Show();
+                if (WindowState == WindowState.Minimized)
+                    WindowState = WindowState.Normal;
+                Activate();
+                Focus();
+            });
+        }
+
+        private void LoadSettingsIntoUi()
+        {
+            _isSyncingOptionsUi = true;
+            try
+            {
+                AppSettings s = _settingsService.Current;
+                PwdGeminiKey.Password = s.GeminiApiKey ?? "";
+                TxtGeminiKeyVisible.Text = s.GeminiApiKey ?? "";
+
+                foreach (ComboBoxItem item in CmbGeminiModel.Items)
+                {
+                    if (string.Equals(item.Content.ToString(), s.GeminiModel, StringComparison.OrdinalIgnoreCase))
+                    {
+                        CmbGeminiModel.SelectedItem = item;
+                        break;
+                    }
+                }
+
+                ChkWatchMode.IsChecked = s.WatchModeEnabled;
+                ChkMinimizeTray.IsChecked = s.MinimizeToTrayOnClose;
+                ChkWfpAudit.IsChecked = s.WfpAuditEnabled;
+
+                _redirectRulesList.Clear();
+                if (s.RedirectRules != null)
+                {
+                    foreach (RedirectRule rr in s.RedirectRules)
+                        _redirectRulesList.Add(rr);
+                }
+
+                UpdateWatchModeUi();
+                UpdateKnownAppsCountUi();
+            }
+            finally
+            {
+                _isSyncingOptionsUi = false;
             }
         }
+
+        private void UpdateWatchModeUi()
+        {
+            bool on = _settingsService.Current.WatchModeEnabled;
+            BtnWatchStatusPill.Content = on ? "👁️ Surveillance : ON" : "👁️ Surveillance : OFF";
+            BtnWatchStatusPill.Background = on
+                ? new SolidColorBrush(System.Windows.Media.Color.FromRgb(6, 78, 59))
+                : InactiveBtnBrush;
+            BtnWatchStatusPill.BorderBrush = on
+                ? new SolidColorBrush(System.Windows.Media.Color.FromRgb(16, 185, 129))
+                : new SolidColorBrush(System.Windows.Media.Color.FromRgb(40, 50, 76));
+
+            if (_trayWatchMenuItem != null)
+                _trayWatchMenuItem.Checked = on;
+        }
+
+        private void UpdateKnownAppsCountUi()
+        {
+            int count = _settingsService.Current.KnownApps != null ? _settingsService.Current.KnownApps.Count : 0;
+            TxtKnownAppsCount.Text = string.Format("{0} application(s) connue(s)", count);
+        }
+
+        private void BtnWatchStatusPill_Click(object sender, RoutedEventArgs e)
+        {
+            ChkWatchMode.IsChecked = !_settingsService.Current.WatchModeEnabled;
+        }
+
+        private void WatchOption_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_isSyncingOptionsUi) return;
+
+            bool watchOn = ChkWatchMode.IsChecked == true;
+            _settingsService.Current.WatchModeEnabled = watchOn;
+            _settingsService.Current.MinimizeToTrayOnClose = ChkMinimizeTray.IsChecked == true;
+            _settingsService.Save();
+
+            if (watchOn && _settingsService.Current.KnownApps.Count == 0 && _rawConnections.Count > 0)
+            {
+                CaptureKnownAppsBaseline();
+            }
+
+            UpdateWatchModeUi();
+        }
+
+        private void ChkWfpAudit_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_isSyncingOptionsUi) return;
+            bool enable = ChkWfpAudit.IsChecked == true;
+            _settingsService.Current.WfpAuditEnabled = enable;
+            _settingsService.Save();
+
+            Task.Run(() =>
+            {
+                bool ok = enable ? _wfpAuditService.EnableWfpDropAuditing() : _wfpAuditService.DisableWfpDropAuditing();
+                Dispatcher.Invoke(() =>
+                {
+                    AddLog("AUDIT WFP", ok
+                        ? (enable ? "Audit des blocages WFP activé." : "Audit WFP désactivé.")
+                        : "Impossible de modifier auditpol (droits requis).", "Système");
+                });
+            });
+        }
+
+        private void BtnBaselineKnown_Click(object sender, RoutedEventArgs e)
+        {
+            int added = CaptureKnownAppsBaseline();
+            AddLog("SURVEILLANCE", string.Format("Baseline enregistrée ({0} apps connues).", added), "Surveillance");
+            MessageBox.Show("Toutes les applications actuellement actives ont été enregistrées comme connues.", "Surveillance", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+
+        private void BtnClearKnown_Click(object sender, RoutedEventArgs e)
+        {
+            _settingsService.ClearKnownApps();
+            _sessionAlertedApps.Clear();
+            UpdateKnownAppsCountUi();
+            AddLog("SURVEILLANCE", "Liste des applications connues réinitialisée.", "Surveillance");
+        }
+
+        private int CaptureKnownAppsBaseline()
+        {
+            List<string> ids = new List<string>();
+            foreach (NetworkConnection c in _rawConnections)
+            {
+                string id = GetAppIdentifier(c);
+                if (!string.IsNullOrEmpty(id)) ids.Add(id);
+            }
+            _settingsService.MarkAppsAsKnownBatch(ids);
+            UpdateKnownAppsCountUi();
+            return _settingsService.Current.KnownApps.Count;
+        }
+
+        private static string GetAppIdentifier(NetworkConnection c)
+        {
+            if (c == null) return "";
+            if (!string.IsNullOrEmpty(c.ProcessPath) && c.ProcessPath != "N/A")
+                return c.ProcessPath;
+            return c.ProcessName ?? "";
+        }
+
+        private static bool ShouldIgnoreForWatchMode(NetworkConnection c)
+        {
+            if (c == null) return true;
+            if (c.ProcessId <= 4) return true;
+            if (c.ConnectionScope == "LocalPort") return true;
+
+            string p = (c.ProcessName ?? "").ToLowerInvariant();
+            if (p == "ipscanconnect.exe" || p == "systemsettings.exe" || p == "control.exe" || p == "mmc.exe")
+                return true;
+
+            if (NetworkMonitorService.IsSystemProcess(c.ProcessName, c.ProcessPath))
+                return true;
+
+            return false;
+        }
+
+        private void EvaluateWatchModeDetections(List<NetworkConnection> conns)
+        {
+            if (!_settingsService.Current.WatchModeEnabled || conns == null || conns.Count == 0)
+                return;
+
+            // Si première exécution sans baseline, enregistrer l'état initial silencieusement
+            if (_settingsService.Current.KnownApps.Count == 0)
+            {
+                CaptureKnownAppsBaseline();
+                return;
+            }
+
+            foreach (NetworkConnection c in conns)
+            {
+                if (ShouldIgnoreForWatchMode(c)) continue;
+
+                string id = GetAppIdentifier(c);
+                if (string.IsNullOrEmpty(id)) continue;
+                if (_settingsService.IsKnownApp(id) || _sessionAlertedApps.Contains(id))
+                    continue;
+
+                _sessionAlertedApps.Add(id);
+                string target = string.Format("{0}:{1}",
+                    string.IsNullOrEmpty(c.RemoteHost) ? c.RemoteAddress : c.RemoteHost,
+                    c.RemotePort);
+
+                AddLog("NOUVELLE APP DETECTEE",
+                    string.Format("Connexion inconnue vers {0} ({1})", target, c.ScopeBadge),
+                    c.ProcessName,
+                    target);
+
+                if (_trayIcon != null)
+                {
+                    _trayIcon.ShowBalloonTip(
+                        4000,
+                        "IpScanConnect — Nouvelle connexion détectée",
+                        string.Format("{0} vient de se connecter à {1}", c.ProcessName, target),
+                        System.Windows.Forms.ToolTipIcon.Warning);
+                }
+            }
+        }
+
+        private void BlockService_SandboxExeAutoBlocked(string folder, string exePath)
+        {
+            Dispatcher.Invoke(() =>
+            {
+                string fileName = Path.GetFileName(exePath);
+                AddLog("SANDBOX AUTO-BLOCAGE", "Nouvel exécutable bloqué automatiquement : " + exePath, fileName, folder);
+                RecordBlockedAttempt(new BlockedAttempt
+                {
+                    Timestamp = DateTime.Now,
+                    Source = "Sandbox",
+                    ProcessName = fileName,
+                    ProcessPath = exePath,
+                    Protocol = "ALL",
+                    RemoteAddress = "*",
+                    MatchedRule = "Sandbox: " + folder,
+                    Status = "🛑 Bloqué automatiquement"
+                });
+                _blockService.InvalidateCache();
+            });
+        }
+
+        #endregion
+
+        #region Rafraîchissement & Données
 
         private void RefreshTimer_Tick(object sender, EventArgs e)
         {
             if (!_isLoading)
-            {
                 RefreshConnectionsOnly();
-            }
         }
 
         private async void RefreshAll()
@@ -110,31 +463,24 @@ namespace IpScanConnect
 
             try
             {
-                List<BlockedRule> rules = await Task.Run(() => _blockService.GetAllBlockedRules());
+                List<BlockedRule> rules = await Task.Run(() => _blockService.GetAllBlockedRules(true));
                 List<NetworkConnection> conns = await Task.Run(() => _netMonitor.GetAllConnections(_blockService));
+                List<BlockedAttempt> extraAttempts = await Task.Run(() => CollectExtraBlockedAttempts(rules));
 
                 _rawConnections = conns;
 
-                // Mise à jour des règles
                 _rulesList.Clear();
-                int blockedCount = 0;
                 foreach (BlockedRule r in rules)
-                {
                     _rulesList.Add(r);
-                    blockedCount++;
-                }
 
-                // Reconstruction des groupes
+                RecordLiveBlockedConnections(conns, extraAttempts);
+                EvaluateWatchModeDetections(conns);
                 RebuildGroups();
-
-                // Statistiques globales
-                int uniqueApps = _rawConnections.Select(c => c.ProcessName).Distinct().Count();
-                TxtTotalApps.Text = uniqueApps.ToString();
-                TxtTotalConnections.Text = _rawConnections.Count.ToString();
-                TxtBlockedSummary.Text = blockedCount.ToString();
+                UpdateGlobalKpis(rules.Count);
 
                 TxtLastUpdate.Text = "Dernière mise à jour : " + DateTime.Now.ToString("HH:mm:ss");
-                TxtStatusBar.Text = string.Format("Prêt. {0} applications, {1} connexions surveillées.", uniqueApps, _rawConnections.Count);
+                TxtStatusBar.Text = string.Format("Prêt. {0} applications, {1} flux surveillés.",
+                    TxtTotalApps.Text, _rawConnections.Count);
             }
             catch (Exception ex)
             {
@@ -153,14 +499,17 @@ namespace IpScanConnect
 
             try
             {
+                List<BlockedRule> rules = await Task.Run(() => _blockService.GetAllBlockedRules(false));
                 List<NetworkConnection> conns = await Task.Run(() => _netMonitor.GetAllConnections(_blockService));
+                List<BlockedAttempt> extraAttempts = await Task.Run(() => CollectExtraBlockedAttempts(rules));
+
                 _rawConnections = conns;
 
+                RecordLiveBlockedConnections(conns, extraAttempts);
+                EvaluateWatchModeDetections(conns);
                 RebuildGroups();
+                UpdateGlobalKpis(rules.Count);
 
-                int uniqueApps = _rawConnections.Select(c => c.ProcessName).Distinct().Count();
-                TxtTotalApps.Text = uniqueApps.ToString();
-                TxtTotalConnections.Text = _rawConnections.Count.ToString();
                 TxtLastUpdate.Text = "Dernière mise à jour : " + DateTime.Now.ToString("HH:mm:ss");
             }
             catch { }
@@ -170,45 +519,145 @@ namespace IpScanConnect
             }
         }
 
-        #region Regroupement et Catégories
+        private List<BlockedAttempt> CollectExtraBlockedAttempts(List<BlockedRule> rules)
+        {
+            List<BlockedAttempt> list = new List<BlockedAttempt>();
+
+            if (_driverClient != null && _driverClient.IsDriverLoaded)
+            {
+                list.AddRange(_driverClient.GetBlockedLogs());
+            }
+
+            if (_settingsService.Current.WfpAuditEnabled)
+            {
+                list.AddRange(_wfpAuditService.ReadRecentBlockedEvents(_blockService, rules));
+            }
+
+            return list;
+        }
+
+        private void RecordLiveBlockedConnections(List<NetworkConnection> conns, List<BlockedAttempt> extraAttempts)
+        {
+            if (conns != null)
+            {
+                foreach (NetworkConnection c in conns)
+                {
+                    if (!c.IsBlocked) continue;
+                    string key = string.Format("LIVE|{0}|{1}|{2}|{3}|{4}",
+                        c.ProcessId, c.Protocol, c.RemoteAddress, c.RemotePort, c.State);
+
+                    if (_recentAttemptKeys.Add(key))
+                    {
+                        RecordBlockedAttempt(new BlockedAttempt
+                        {
+                            Timestamp = DateTime.Now,
+                            Source = "Socket Actif",
+                            ProcessId = c.ProcessId,
+                            ProcessName = c.ProcessName,
+                            ProcessPath = c.ProcessPath,
+                            Protocol = c.ProtocolDisplay,
+                            LocalEndpoint = c.LocalDisplay,
+                            RemoteAddress = c.RemoteAddress,
+                            RemotePort = c.RemotePort,
+                            MatchedRule = string.IsNullOrEmpty(c.BlockReason) ? "Règle IpScanConnect" : c.BlockReason,
+                            Status = c.StatusDisplay
+                        });
+                    }
+                }
+            }
+
+            if (extraAttempts != null)
+            {
+                foreach (BlockedAttempt a in extraAttempts)
+                {
+                    string key = string.Format("AUDIT|{0:yyyyMMddHHmmss}|{1}|{2}|{3}:{4}",
+                        a.Timestamp, a.Source, a.ProcessName, a.RemoteAddress, a.RemotePort);
+                    if (_recentAttemptKeys.Add(key))
+                    {
+                        RecordBlockedAttempt(a);
+                    }
+                }
+            }
+
+            if (_recentAttemptKeys.Count > 2000)
+            {
+                _recentAttemptKeys.Clear();
+            }
+        }
+
+        private void RecordBlockedAttempt(BlockedAttempt attempt)
+        {
+            if (attempt == null) return;
+            _blockedAttemptsList.Insert(0, attempt);
+            while (_blockedAttemptsList.Count > 400)
+            {
+                _blockedAttemptsList.RemoveAt(_blockedAttemptsList.Count - 1);
+            }
+        }
+
+        private void UpdateGlobalKpis(int rulesCount)
+        {
+            int uniqueApps = _rawConnections.Select(c => c.ProcessName).Distinct().Count();
+            int inetCount = _rawConnections.Count(c => c.IsInternet);
+            int localCount = _rawConnections.Count - inetCount;
+            double totalSendRate = _rawConnections.Sum(c => c.SendRateBps);
+            double totalRecvRate = _rawConnections.Sum(c => c.ReceiveRateBps);
+
+            TxtTotalApps.Text = uniqueApps.ToString();
+            TxtInternetCount.Text = inetCount.ToString();
+            TxtLocalCount.Text = localCount.ToString();
+            TxtTotalBandwidth.Text = string.Format("↑ {0}/s ↓ {1}/s",
+                NetworkConnection.FormatBytes((long)totalSendRate),
+                NetworkConnection.FormatBytes((long)totalRecvRate));
+            TxtBlockedSummary.Text = rulesCount.ToString();
+        }
+
+        #endregion
+
+        #region Regroupement, Filtrage Multi-Onglet, Portée & Tri
 
         private void RebuildGroups()
         {
-            string filter = (TxtSearch.Text ?? "").Trim().ToLower();
-
-            // Retenir l'état d'expansion des groupes déjà affichés
-            Dictionary<string, bool> previousExpansion = new Dictionary<string, bool>();
-            foreach (var g in _displayedGroups)
+            string filter = "";
+            if (MainTabs != null && MainTabs.SelectedIndex == 0)
             {
-                previousExpansion[g.Key] = g.IsExpanded;
+                filter = (TxtSearch.Text ?? "").Trim().ToLowerInvariant();
             }
 
-            // Filtrage initial des connexions si recherche active
             IEnumerable<NetworkConnection> filtered = _rawConnections;
+
+            if (_scopeFilter == "INTERNET")
+                filtered = filtered.Where(c => c.ConnectionScope == "Internet");
+            else if (_scopeFilter == "LAN")
+                filtered = filtered.Where(c => c.ConnectionScope == "LocalNetwork");
+            else if (_scopeFilter == "LOCAL")
+                filtered = filtered.Where(c => c.ConnectionScope == "LocalPort");
+
             if (!string.IsNullOrEmpty(filter))
             {
-                filtered = _rawConnections.Where(c =>
-                    (c.ProcessName != null && c.ProcessName.ToLower().Contains(filter)) ||
+                filtered = filtered.Where(c =>
+                    (c.ProcessName != null && c.ProcessName.ToLowerInvariant().Contains(filter)) ||
                     (c.ProcessId.ToString().Contains(filter)) ||
-                    (c.RemoteAddress != null && c.RemoteAddress.Contains(filter)) ||
-                    (c.RemoteHost != null && c.RemoteHost.ToLower().Contains(filter)) ||
+                    (c.WindowsServices != null && c.WindowsServices.ToLowerInvariant().Contains(filter)) ||
+                    (c.RemoteAddress != null && c.RemoteAddress.ToLowerInvariant().Contains(filter)) ||
+                    (c.RemoteHost != null && c.RemoteHost.ToLowerInvariant().Contains(filter)) ||
                     (c.RemotePort.ToString().Contains(filter)) ||
                     (c.LocalPort.ToString().Contains(filter)) ||
-                    (c.State != null && c.State.ToLower().Contains(filter)) ||
-                    (c.Category != null && c.Category.ToLower().Contains(filter))
+                    (c.State != null && c.State.ToLowerInvariant().Contains(filter)) ||
+                    (c.Category != null && c.Category.ToLowerInvariant().Contains(filter)) ||
+                    (c.ScopeBadge != null && c.ScopeBadge.ToLowerInvariant().Contains(filter))
                 );
             }
 
-            List<ProcessGroup> newGroups = new List<ProcessGroup>();
+            List<ProcessGroup> computedGroups = new List<ProcessGroup>();
 
             if (_groupMode == "BY_APP")
             {
-                // Regroupement par Application
-                var byProc = filtered.GroupBy(c => c.ProcessName).OrderByDescending(g => g.Count());
-
+                var byProc = filtered.GroupBy(c => c.ProcessName ?? "Inconnu");
                 foreach (var group in byProc)
                 {
-                    var first = group.First();
+                    var conns = OrderConnections(group).ToList();
+                    var first = conns.FirstOrDefault(x => !string.IsNullOrEmpty(x.ProcessPath)) ?? conns[0];
                     string key = "APP_" + group.Key;
 
                     ProcessGroup pg = new ProcessGroup
@@ -217,36 +666,23 @@ namespace IpScanConnect
                         ProcessName = group.Key,
                         ProcessId = first.ProcessId,
                         ProcessPath = first.ProcessPath,
+                        WindowsServices = first.WindowsServices,
                         Category = first.Category,
                         IconEmoji = GetEmojiForCategory(first.Category, group.Key),
-                        IsBlocked = first.IsBlocked
+                        AppIcon = IconCacheService.GetIconForPath(first.ProcessPath),
+                        IsBlocked = conns.Any(x => x.IsBlocked),
+                        IsCategoryGroup = false,
+                        AllConnections = conns
                     };
 
-                    foreach (var c in group.OrderByDescending(x => x.State == "ESTABLISHED"))
-                    {
-                        pg.Connections.Add(c);
-                    }
-
-                    // Expansion : restaurer l'état si l'utilisateur l'avait déjà déplié lui-même, sinon APLATI par défaut !
-                    if (previousExpansion.ContainsKey(key))
-                    {
-                        pg.IsExpanded = previousExpansion[key];
-                    }
-                    else if (!string.IsNullOrEmpty(filter))
-                    {
-                        pg.IsExpanded = true; // Déplier uniquement lors d'une recherche textuelle active
-                    }
-                    else
-                    {
-                        pg.IsExpanded = false; // APLATI PAR DÉFAUT
-                    }
-
-                    newGroups.Add(pg);
+                    pg.RecalculateMetrics();
+                    computedGroups.Add(pg);
                 }
+
+                computedGroups = ProcessGroup.SortGroups(computedGroups, _sortBy, _sortDescending);
             }
             else
             {
-                // Regroupement par Catégorie Générale
                 string[] categories = new string[]
                 {
                     "🌐 Applications Utilisateur",
@@ -255,12 +691,14 @@ namespace IpScanConnect
                     "🛑 Éléments Bloqués"
                 };
 
+                List<NetworkConnection> filteredList = filtered.ToList();
                 foreach (string cat in categories)
                 {
-                    var inCat = filtered.Where(c => c.Category == cat).ToList();
+                    var inCat = filteredList.Where(c => c.Category == cat).ToList();
                     if (inCat.Count == 0 && !string.IsNullOrEmpty(filter)) continue;
 
                     string key = "CAT_" + cat;
+                    var ordered = OrderConnections(inCat).ToList();
                     ProcessGroup pg = new ProcessGroup
                     {
                         Key = key,
@@ -269,41 +707,93 @@ namespace IpScanConnect
                         ProcessPath = "",
                         Category = cat,
                         IconEmoji = cat.Substring(0, 2),
-                        IsBlocked = cat.Contains("Bloqués")
+                        IsBlocked = cat.Contains("Bloqués"),
+                        IsCategoryGroup = true,
+                        AllConnections = ordered
                     };
 
-                    foreach (var c in inCat.OrderBy(x => x.ProcessName))
-                    {
-                        pg.Connections.Add(c);
-                    }
-
-                    if (previousExpansion.ContainsKey(key))
-                    {
-                        pg.IsExpanded = previousExpansion[key];
-                    }
-                    else if (!string.IsNullOrEmpty(filter))
-                    {
-                        pg.IsExpanded = true;
-                    }
-                    else
-                    {
-                        pg.IsExpanded = false; // APLATI PAR DÉFAUT
-                    }
-
-                    newGroups.Add(pg);
+                    pg.RecalculateMetrics();
+                    computedGroups.Add(pg);
                 }
             }
 
-            _displayedGroups.Clear();
-            foreach (var g in newGroups)
+            ApplyDifferentialGroupUpdate(computedGroups, !string.IsNullOrEmpty(filter));
+        }
+
+        private IEnumerable<NetworkConnection> OrderConnections(IEnumerable<NetworkConnection> conns)
+        {
+            if (_sortBy == "SENT")
+                return _sortDescending
+                    ? conns.OrderByDescending(c => c.BytesSent).ThenBy(c => c.ProcessName)
+                    : conns.OrderBy(c => c.BytesSent).ThenBy(c => c.ProcessName);
+            if (_sortBy == "RECV")
+                return _sortDescending
+                    ? conns.OrderByDescending(c => c.BytesReceived).ThenBy(c => c.ProcessName)
+                    : conns.OrderBy(c => c.BytesReceived).ThenBy(c => c.ProcessName);
+            if (_sortBy == "TOTAL_BYTES")
+                return _sortDescending
+                    ? conns.OrderByDescending(c => c.BytesSent + c.BytesReceived).ThenBy(c => c.ProcessName)
+                    : conns.OrderBy(c => c.BytesSent + c.BytesReceived).ThenBy(c => c.ProcessName);
+            if (_sortBy == "NAME")
+                return _sortDescending
+                    ? conns.OrderByDescending(c => c.ProcessName).ThenBy(c => c.LocalPort)
+                    : conns.OrderBy(c => c.ProcessName).ThenBy(c => c.LocalPort);
+
+            return conns
+                .OrderByDescending(c => c.IsInternet)
+                .ThenByDescending(c => c.State == "ESTABLISHED")
+                .ThenBy(c => c.ProcessName)
+                .ThenBy(c => c.LocalPort);
+        }
+
+        private void ApplyDifferentialGroupUpdate(List<ProcessGroup> targetGroups, bool autoExpandFiltered)
+        {
+            Dictionary<string, ProcessGroup> existingByKey = new Dictionary<string, ProcessGroup>();
+            foreach (ProcessGroup g in _displayedGroups)
             {
-                _displayedGroups.Add(g);
+                existingByKey[g.Key] = g;
+            }
+
+            HashSet<string> targetKeys = new HashSet<string>(targetGroups.Select(g => g.Key));
+
+            // 1. Supprimer les groupes disparus
+            for (int i = _displayedGroups.Count - 1; i >= 0; i--)
+            {
+                if (!targetKeys.Contains(_displayedGroups[i].Key))
+                {
+                    _displayedGroups.RemoveAt(i);
+                }
+            }
+
+            // 2. Mettre à jour ou insérer dans l'ordre exact
+            for (int i = 0; i < targetGroups.Count; i++)
+            {
+                ProcessGroup target = targetGroups[i];
+                ProcessGroup existing;
+                if (existingByKey.TryGetValue(target.Key, out existing))
+                {
+                    existing.UpdateFrom(target);
+                    if (autoExpandFiltered && !existing.IsExpanded)
+                        existing.IsExpanded = true;
+
+                    int curIdx = _displayedGroups.IndexOf(existing);
+                    if (curIdx >= 0 && curIdx != i)
+                    {
+                        _displayedGroups.Move(curIdx, i);
+                    }
+                }
+                else
+                {
+                    if (autoExpandFiltered)
+                        target.IsExpanded = true;
+                    _displayedGroups.Insert(i, target);
+                }
             }
         }
 
         private static string GetEmojiForCategory(string category, string procName)
         {
-            string p = (procName ?? "").ToLower();
+            string p = (procName ?? "").ToLowerInvariant();
             if (p.Contains("chrome") || p.Contains("brave") || p.Contains("firefox") || p.Contains("edge"))
                 return "🌐";
             if (p.Contains("discord") || p.Contains("steam") || p.Contains("spotify") || p.Contains("telegram"))
@@ -319,57 +809,227 @@ namespace IpScanConnect
 
         private void TxtSearch_TextChanged(object sender, TextChangedEventArgs e)
         {
-            RebuildGroups();
+            string text = TxtSearch.Text ?? "";
+            TxtSearchHint.Visibility = string.IsNullOrEmpty(text) ? Visibility.Visible : Visibility.Collapsed;
+            BtnClearSearch.Visibility = string.IsNullOrEmpty(text) ? Visibility.Collapsed : Visibility.Visible;
+            ApplyActiveTabSearch();
+        }
+
+        private void BtnClearSearch_Click(object sender, RoutedEventArgs e)
+        {
+            TxtSearch.Text = "";
+        }
+
+        private void MainTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (e.Source != MainTabs) return;
+            UpdateSearchHintForActiveTab();
+            ApplyActiveTabSearch();
+        }
+
+        private void UpdateSearchHintForActiveTab()
+        {
+            if (MainTabs == null || TxtSearchHint == null) return;
+            int idx = MainTabs.SelectedIndex;
+            if (idx == 0)
+            {
+                TxtSearchHint.Text = "Filtrer connexions, apps, IP, ports, services...";
+                BtnCollapseAll.Visibility = Visibility.Visible;
+            }
+            else if (idx == 1)
+            {
+                TxtSearchHint.Text = "Filtrer règles de blocage et tentatives bloquées...";
+                BtnCollapseAll.Visibility = Visibility.Collapsed;
+            }
+            else if (idx == 2)
+            {
+                TxtSearchHint.Text = "Filtrer l'historique des analyses IA...";
+                BtnCollapseAll.Visibility = Visibility.Collapsed;
+            }
+            else
+            {
+                TxtSearchHint.Text = "Filtrer redirections hosts et journal de sécurité...";
+                BtnCollapseAll.Visibility = Visibility.Collapsed;
+            }
+        }
+
+        private void ApplyActiveTabSearch()
+        {
+            if (MainTabs == null) return;
+            int idx = MainTabs.SelectedIndex;
+            if (idx == 0)
+            {
+                RebuildGroups();
+            }
+            else if (idx == 1)
+            {
+                if (_rulesView != null) _rulesView.Refresh();
+                if (_attemptsView != null) _attemptsView.Refresh();
+            }
+            else if (idx == 2)
+            {
+                if (_aiHistoryView != null) _aiHistoryView.Refresh();
+            }
+            else if (idx == 3)
+            {
+                if (_redirectsView != null) _redirectsView.Refresh();
+                if (_logsView != null) _logsView.Refresh();
+            }
+        }
+
+        private string CurrentFilterLower
+        {
+            get { return (TxtSearch.Text ?? "").Trim().ToLowerInvariant(); }
+        }
+
+        private bool FilterRuleItem(object obj)
+        {
+            string f = CurrentFilterLower;
+            if (string.IsNullOrEmpty(f)) return true;
+            BlockedRule r = obj as BlockedRule;
+            if (r == null) return false;
+            return ContainsCI(r.RuleType, f) || ContainsCI(r.Target, f) || ContainsCI(r.RuleName, f) || ContainsCI(r.Direction, f);
+        }
+
+        private bool FilterAttemptItem(object obj)
+        {
+            string f = CurrentFilterLower;
+            if (string.IsNullOrEmpty(f)) return true;
+            BlockedAttempt a = obj as BlockedAttempt;
+            if (a == null) return false;
+            return ContainsCI(a.ProcessName, f) || ContainsCI(a.RemoteAddress, f) ||
+                   a.RemotePort.ToString().Contains(f) || ContainsCI(a.MatchedRule, f) ||
+                   ContainsCI(a.Source, f) || ContainsCI(a.Status, f);
+        }
+
+        private bool FilterRedirectItem(object obj)
+        {
+            string f = CurrentFilterLower;
+            if (string.IsNullOrEmpty(f)) return true;
+            RedirectRule r = obj as RedirectRule;
+            if (r == null) return false;
+            return ContainsCI(r.SourceDomain, f) || ContainsCI(r.TargetAddress, f);
+        }
+
+        private bool FilterLogItem(object obj)
+        {
+            string f = CurrentFilterLower;
+            if (string.IsNullOrEmpty(f)) return true;
+            LogEvent l = obj as LogEvent;
+            if (l == null) return false;
+            return ContainsCI(l.EventType, f) || ContainsCI(l.ProcessName, f) ||
+                   ContainsCI(l.Target, f) || ContainsCI(l.Details, f);
+        }
+
+        private bool FilterAiHistoryItem(object obj)
+        {
+            string f = CurrentFilterLower;
+            if (string.IsNullOrEmpty(f)) return true;
+            GeminiAnalysisResult r = obj as GeminiAnalysisResult;
+            if (r == null) return false;
+            return ContainsCI(r.TargetName, f) || ContainsCI(r.Scope, f) ||
+                   ContainsCI(r.Summary, f) || ContainsCI(r.RiskLevel, f);
+        }
+
+        private static bool ContainsCI(string source, string filterLower)
+        {
+            return !string.IsNullOrEmpty(source) && source.ToLowerInvariant().Contains(filterLower);
         }
 
         private void BtnGroupApps_Click(object sender, RoutedEventArgs e)
         {
             _groupMode = "BY_APP";
-            BtnGroupApps.Background = (System.Windows.Media.Brush)FindResource("AccentBlue");
-            BtnGroupCategories.Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(30, 35, 55));
+            BtnGroupApps.Background = (Brush)FindResource("AccentBlue");
+            BtnGroupTiles.Background = InactiveBtnBrush;
+            BtnGroupCategories.Background = InactiveBtnBrush;
+            ListProcessGroups.Visibility = Visibility.Visible;
+            ScrollTileMode.Visibility = Visibility.Collapsed;
             RebuildGroups();
+        }
+
+        private void BtnGroupTiles_Click(object sender, RoutedEventArgs e)
+        {
+            _groupMode = "BY_APP";
+            BtnGroupApps.Background = InactiveBtnBrush;
+            BtnGroupTiles.Background = (Brush)FindResource("AccentBlue");
+            BtnGroupCategories.Background = InactiveBtnBrush;
+            ListProcessGroups.Visibility = Visibility.Collapsed;
+            ScrollTileMode.Visibility = Visibility.Visible;
+            RebuildGroups();
+        }
+
+        private void BtnInspectTile_Click(object sender, RoutedEventArgs e)
+        {
+            Button btn = sender as Button;
+            ProcessGroup pg = btn != null ? btn.Tag as ProcessGroup : null;
+            if (pg != null)
+            {
+                pg.IsExpanded = true;
+                BtnGroupApps_Click(null, null);
+                ListProcessGroups.ScrollIntoView(pg);
+            }
         }
 
         private void BtnGroupCategories_Click(object sender, RoutedEventArgs e)
         {
             _groupMode = "BY_CATEGORY";
-            BtnGroupCategories.Background = (System.Windows.Media.Brush)FindResource("AccentBlue");
-            BtnGroupApps.Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(30, 35, 55));
+            BtnGroupCategories.Background = (Brush)FindResource("AccentBlue");
+            BtnGroupApps.Background = InactiveBtnBrush;
+            BtnGroupTiles.Background = InactiveBtnBrush;
+            ListProcessGroups.Visibility = Visibility.Visible;
+            ScrollTileMode.Visibility = Visibility.Collapsed;
             RebuildGroups();
         }
 
-        private void BtnExpandAll_Click(object sender, RoutedEventArgs e)
+        private void BtnScopeFilter_Click(object sender, RoutedEventArgs e)
         {
-            foreach (var g in _displayedGroups)
+            Button btn = sender as Button;
+            if (btn == null || btn.Tag == null) return;
+            _scopeFilter = btn.Tag.ToString();
+
+            BtnScopeAll.Background = _scopeFilter == "ALL" ? (Brush)FindResource("AccentBlue") : InactiveBtnBrush;
+            BtnScopeInternet.Background = _scopeFilter == "INTERNET" ? (Brush)FindResource("AccentBlue") : InactiveBtnBrush;
+            BtnScopeLan.Background = _scopeFilter == "LAN" ? (Brush)FindResource("AccentBlue") : InactiveBtnBrush;
+            BtnScopeLocal.Background = _scopeFilter == "LOCAL" ? (Brush)FindResource("AccentBlue") : InactiveBtnBrush;
+
+            RebuildGroups();
+        }
+
+        private void CmbSortBy_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (CmbSortBy == null || CmbSortBy.SelectedItem == null) return;
+            ComboBoxItem item = CmbSortBy.SelectedItem as ComboBoxItem;
+            if (item != null && item.Tag != null)
             {
-                g.IsExpanded = true;
+                _sortBy = item.Tag.ToString();
+                if (_rawConnections.Count > 0) RebuildGroups();
             }
+        }
+
+        private void BtnSortDir_Click(object sender, RoutedEventArgs e)
+        {
+            _sortDescending = !_sortDescending;
+            BtnSortDir.Content = _sortDescending ? "⬇️ Décroissant" : "⬆️ Croissant";
+            RebuildGroups();
         }
 
         private void BtnCollapseAll_Click(object sender, RoutedEventArgs e)
         {
-            foreach (var g in _displayedGroups)
-            {
+            foreach (ProcessGroup g in _displayedGroups)
                 g.IsExpanded = false;
-            }
-        }
-
-        private void BtnRefreshNow_Click(object sender, RoutedEventArgs e)
-        {
-            RefreshAll();
         }
 
         #endregion
 
-        #region Actions de Blocage Rapide
+        #region Clic Droit (Ouvrir le Dossier) & Actions Connexions
 
         private void GroupHeader_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
         {
             DependencyObject dep = e.OriginalSource as DependencyObject;
             while (dep != null)
             {
-                if (dep is Button) return; // Le clic était sur un bouton, ne pas plier/déplier
-                dep = System.Windows.Media.VisualTreeHelper.GetParent(dep);
+                if (dep is Button) return;
+                dep = VisualTreeHelper.GetParent(dep);
             }
 
             FrameworkElement fe = sender as FrameworkElement;
@@ -380,27 +1040,323 @@ namespace IpScanConnect
             }
         }
 
-        // Blocage de l'Application depuis l'en-tête du groupe
+        private void GroupCard_ContextMenuOpening(object sender, ContextMenuEventArgs e)
+        {
+            FrameworkElement fe = sender as FrameworkElement;
+            ProcessGroup pg = fe != null ? fe.Tag as ProcessGroup : null;
+            if (pg == null || fe.ContextMenu == null) return;
+
+            ContextMenu menu = fe.ContextMenu;
+            menu.Items.Clear();
+
+            if (pg.IsCategoryGroup)
+            {
+                MenuItem openCatFolder = new MenuItem { Header = "📂 Ouvrir le dossier d'une application de cette catégorie" };
+                var distinctApps = (pg.AllConnections ?? new List<NetworkConnection>())
+                    .Where(c => !string.IsNullOrEmpty(c.ProcessPath) && c.ProcessPath != "N/A")
+                    .GroupBy(c => c.ProcessPath, StringComparer.OrdinalIgnoreCase)
+                    .Select(g => g.First())
+                    .OrderBy(c => c.ProcessName)
+                    .Take(25)
+                    .ToList();
+
+                if (distinctApps.Count == 0)
+                {
+                    openCatFolder.IsEnabled = false;
+                    openCatFolder.Header = "📂 Aucun dossier accessible dans cette catégorie";
+                }
+                else if (distinctApps.Count == 1)
+                {
+                    string singlePath = distinctApps[0].ProcessPath;
+                    openCatFolder.Header = "📂 Ouvrir le dossier (" + distinctApps[0].ProcessName + ")";
+                    openCatFolder.Click += (s, args) => OpenFolderSelectingFile(singlePath);
+                }
+                else
+                {
+                    foreach (NetworkConnection appConn in distinctApps)
+                    {
+                        string pathCopy = appConn.ProcessPath;
+                        MenuItem sub = new MenuItem
+                        {
+                            Header = string.Format("{0} (Port {1})", appConn.ProcessName, appConn.LocalPort > 0 ? appConn.LocalPort : appConn.RemotePort)
+                        };
+                        sub.Click += (s, args) => OpenFolderSelectingFile(pathCopy);
+                        openCatFolder.Items.Add(sub);
+                    }
+                }
+                menu.Items.Add(openCatFolder);
+            }
+            else
+            {
+                MenuItem openItem = new MenuItem { Header = "📂 Ouvrir le dossier de l'application" };
+                openItem.Click += (s, args) => OpenFolderForProcessGroup(pg);
+                menu.Items.Add(openItem);
+
+                MenuItem aiItem = new MenuItem { Header = "✨ Analyser avec Gemini IA" };
+                aiItem.Click += async (s, args) => await AnalyzeSingleApp(pg);
+                menu.Items.Add(aiItem);
+
+                if (pg.CanBlockApp)
+                {
+                    menu.Items.Add(new Separator());
+                    MenuItem blockAppItem = new MenuItem
+                    {
+                        Header = pg.IsBlocked ? "🔓 Débloquer l'application (.exe)" : "🚫 Bloquer l'application (.exe)"
+                    };
+                    blockAppItem.Click += (s, args) => ToggleBlockProcessGroup(pg);
+                    menu.Items.Add(blockAppItem);
+
+                    MenuItem sandboxFolderItem = new MenuItem { Header = "📁 Bloquer tout son dossier (Sandbox)" };
+                    sandboxFolderItem.Click += (s, args) =>
+                    {
+                        string dir = Path.GetDirectoryName(pg.ProcessPath);
+                        if (!string.IsNullOrEmpty(dir)) ExecuteFolderSandbox(dir);
+                    };
+                    menu.Items.Add(sandboxFolderItem);
+                }
+
+                MenuItem knownItem = new MenuItem { Header = "✅ Marquer comme app connue (Surveillance)" };
+                knownItem.Click += (s, args) =>
+                {
+                    string id = !string.IsNullOrEmpty(pg.ProcessPath) && pg.ProcessPath != "N/A" ? pg.ProcessPath : pg.ProcessName;
+                    _settingsService.MarkAppAsKnown(id);
+                    UpdateKnownAppsCountUi();
+                    TxtStatusBar.Text = pg.ProcessName + " marquée comme connue.";
+                };
+                menu.Items.Add(knownItem);
+
+                if (!string.IsNullOrEmpty(pg.ProcessPath) && pg.ProcessPath != "N/A")
+                {
+                    MenuItem copyItem = new MenuItem { Header = "📋 Copier le chemin" };
+                    copyItem.Click += (s, args) => Clipboard.SetText(pg.ProcessPath);
+                    menu.Items.Add(copyItem);
+                }
+            }
+        }
+
+        private void ConnectionRow_ContextMenuOpening(object sender, ContextMenuEventArgs e)
+        {
+            FrameworkElement fe = sender as FrameworkElement;
+            NetworkConnection conn = fe != null ? fe.Tag as NetworkConnection : null;
+            if (conn == null || fe.ContextMenu == null) return;
+
+            ContextMenu menu = fe.ContextMenu;
+            menu.Items.Clear();
+
+            MenuItem openFolderItem = new MenuItem
+            {
+                Header = string.Format("📂 Ouvrir le dossier ({0})", conn.ProcessName)
+            };
+            openFolderItem.Click += (s, args) => OpenFolderForConnection(conn);
+            menu.Items.Add(openFolderItem);
+
+            menu.Items.Add(new Separator());
+
+            if (!string.IsNullOrEmpty(conn.RemoteAddress) &&
+                conn.RemoteAddress != "*" &&
+                conn.RemoteAddress != "0.0.0.0" &&
+                conn.RemoteAddress != "::" &&
+                conn.RemoteAddress != "127.0.0.1" &&
+                conn.RemoteAddress != "::1")
+            {
+                MenuItem blockIpItem = new MenuItem { Header = "🛑 Bloquer cette IP (" + conn.RemoteAddress + ")" };
+                blockIpItem.Click += (s, args) => BlockConnectionIp(conn);
+                menu.Items.Add(blockIpItem);
+            }
+
+            if (!string.IsNullOrEmpty(conn.ProcessPath) && conn.ProcessPath != "N/A" && File.Exists(conn.ProcessPath))
+            {
+                MenuItem blockAppItem = new MenuItem { Header = "🚫 Bloquer l'application (" + conn.ProcessName + ")" };
+                blockAppItem.Click += (s, args) =>
+                {
+                    _blockService.BlockApp(conn.ProcessPath);
+                    _netMonitor.CloseConnectionsForApp(conn.ProcessPath, _rawConnections);
+                    AddLog("BLOCAGE APP", "Application bloquée : " + conn.ProcessPath, conn.ProcessName, conn.ProcessPath);
+                    RefreshAll();
+                };
+                menu.Items.Add(blockAppItem);
+            }
+
+            if (conn.Protocol == "TCP" && conn.IpVersion == "IPv4" && conn.State == "ESTABLISHED")
+            {
+                MenuItem resetItem = new MenuItem { Header = "❌ Couper la connexion (TCP Reset)" };
+                resetItem.Click += (s, args) => CloseTcpConnectionRow(conn);
+                menu.Items.Add(resetItem);
+            }
+
+            menu.Items.Add(new Separator());
+
+            MenuItem copyTarget = new MenuItem { Header = "📋 Copier IP:Port" };
+            copyTarget.Click += (s, args) => Clipboard.SetText(conn.RemotePort > 0 ? conn.RemoteDisplay : conn.LocalDisplay);
+            menu.Items.Add(copyTarget);
+
+            if (!string.IsNullOrEmpty(conn.ProcessPath) && conn.ProcessPath != "N/A")
+            {
+                MenuItem copyPath = new MenuItem { Header = "📋 Copier le chemin" };
+                copyPath.Click += (s, args) => Clipboard.SetText(conn.ProcessPath);
+                menu.Items.Add(copyPath);
+            }
+        }
+
+        private void GridRules_ContextMenuOpening(object sender, ContextMenuEventArgs e)
+        {
+            BlockedRule sel = GridRules.SelectedItem as BlockedRule;
+            if (sel == null || GridRules.ContextMenu == null)
+            {
+                e.Handled = true;
+                return;
+            }
+
+            ContextMenu menu = GridRules.ContextMenu;
+            menu.Items.Clear();
+
+            if (sel.RuleType == "Application" || sel.RuleType == "Dossier Sandbox")
+            {
+                MenuItem openItem = new MenuItem { Header = "📂 Ouvrir le dossier" };
+                openItem.Click += (s, args) =>
+                {
+                    if (sel.RuleType == "Dossier Sandbox")
+                        OpenFolderPath(sel.Target);
+                    else
+                        OpenFolderSelectingFile(sel.Target);
+                };
+                menu.Items.Add(openItem);
+            }
+
+            MenuItem unblockItem = new MenuItem { Header = "🔓 Débloquer cette règle" };
+            unblockItem.Click += (s, args) => BtnUnblockSelected_Click(null, null);
+            menu.Items.Add(unblockItem);
+        }
+
+        private void GridAttempts_ContextMenuOpening(object sender, ContextMenuEventArgs e)
+        {
+            BlockedAttempt sel = GridBlockedAttempts.SelectedItem as BlockedAttempt;
+            if (sel == null || GridBlockedAttempts.ContextMenu == null)
+            {
+                e.Handled = true;
+                return;
+            }
+
+            ContextMenu menu = GridBlockedAttempts.ContextMenu;
+            menu.Items.Clear();
+
+            if (!string.IsNullOrEmpty(sel.ProcessPath) && sel.ProcessPath != "N/A")
+            {
+                MenuItem openItem = new MenuItem { Header = "📂 Ouvrir le dossier de l'app" };
+                openItem.Click += (s, args) => OpenFolderSelectingFile(sel.ProcessPath);
+                menu.Items.Add(openItem);
+            }
+
+            MenuItem copyItem = new MenuItem { Header = "📋 Copier cible (" + sel.TargetDisplay + ")" };
+            copyItem.Click += (s, args) => Clipboard.SetText(sel.TargetDisplay);
+            menu.Items.Add(copyItem);
+        }
+
+        private void BtnOpenGroupFolder_Click(object sender, RoutedEventArgs e)
+        {
+            Button btn = sender as Button;
+            ProcessGroup pg = btn != null ? btn.Tag as ProcessGroup : null;
+            if (pg != null) OpenFolderForProcessGroup(pg);
+        }
+
+        private void OpenFolderForProcessGroup(ProcessGroup pg)
+        {
+            if (pg == null) return;
+            string path = pg.ProcessPath;
+            if ((string.IsNullOrEmpty(path) || path == "N/A") && pg.AllConnections != null)
+            {
+                var withPath = pg.AllConnections.FirstOrDefault(c => !string.IsNullOrEmpty(c.ProcessPath) && c.ProcessPath != "N/A");
+                if (withPath != null) path = withPath.ProcessPath;
+            }
+
+            if (string.IsNullOrEmpty(path) || path == "N/A")
+            {
+                if (pg.ProcessId == 4 || string.Equals(pg.ProcessName, "System", StringComparison.OrdinalIgnoreCase))
+                    path = @"C:\Windows\System32\ntoskrnl.exe";
+            }
+
+            OpenFolderSelectingFile(path);
+        }
+
+        private void OpenFolderForConnection(NetworkConnection conn)
+        {
+            if (conn == null) return;
+            string path = conn.ProcessPath;
+            if (string.IsNullOrEmpty(path) || path == "N/A")
+            {
+                if (conn.ProcessId == 4 || string.Equals(conn.ProcessName, "System", StringComparison.OrdinalIgnoreCase))
+                    path = @"C:\Windows\System32\ntoskrnl.exe";
+            }
+            OpenFolderSelectingFile(path);
+        }
+
+        private void OpenFolderSelectingFile(string filePath)
+        {
+            try
+            {
+                if (!string.IsNullOrEmpty(filePath) && File.Exists(filePath))
+                {
+                    Process.Start("explorer.exe", string.Format("/select,\"{0}\"", filePath));
+                    return;
+                }
+                string dir = !string.IsNullOrEmpty(filePath) ? Path.GetDirectoryName(filePath) : "";
+                if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir))
+                {
+                    Process.Start("explorer.exe", "\"" + dir + "\"");
+                    return;
+                }
+                MessageBox.Show("Chemin d'exécutable introuvable ou protégé par le système.", "Dossier introuvable", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Impossible d'ouvrir le dossier : " + ex.Message, "Erreur", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+
+        private void OpenFolderPath(string folderPath)
+        {
+            try
+            {
+                if (!string.IsNullOrEmpty(folderPath) && Directory.Exists(folderPath))
+                {
+                    Process.Start("explorer.exe", "\"" + folderPath + "\"");
+                }
+            }
+            catch { }
+        }
+
         private void BtnBlockAppFromGroup_Click(object sender, RoutedEventArgs e)
         {
             e.Handled = true;
             Button btn = sender as Button;
             ProcessGroup pg = btn != null ? btn.Tag as ProcessGroup : null;
+            ToggleBlockProcessGroup(pg);
+        }
+
+        private void ToggleBlockProcessGroup(ProcessGroup pg)
+        {
             if (pg == null) return;
 
             string appPath = pg.ProcessPath;
-            if (string.IsNullOrEmpty(appPath) || !File.Exists(appPath))
+            if ((string.IsNullOrEmpty(appPath) || !File.Exists(appPath)) && pg.AllConnections != null)
             {
-                // Si le chemin n'était pas présent sur le groupe, regarder dans les connexions
-                var withPath = pg.Connections.FirstOrDefault(c => !string.IsNullOrEmpty(c.ProcessPath) && File.Exists(c.ProcessPath));
+                var withPath = pg.AllConnections.FirstOrDefault(c => !string.IsNullOrEmpty(c.ProcessPath) && File.Exists(c.ProcessPath));
                 if (withPath != null) appPath = withPath.ProcessPath;
             }
 
             if (string.IsNullOrEmpty(appPath) || !File.Exists(appPath))
             {
                 MessageBox.Show(
-                    "Impossible de déterminer le chemin d'accès au fichier pour " + pg.ProcessName + " (processus système ou protégé).",
+                    "Impossible de déterminer le chemin d'accès au fichier pour " + pg.ProcessName + ".",
                     "Information", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            if (pg.IsBlocked)
+            {
+                _blockService.UnblockApp(appPath);
+                AddLog("DEBLOCAGE APP", "Application débloquée : " + appPath, pg.ProcessName, appPath);
+                RefreshAll();
                 return;
             }
 
@@ -413,28 +1369,31 @@ namespace IpScanConnect
             if (res == MessageBoxResult.Yes)
             {
                 _blockService.BlockApp(appPath);
+                _netMonitor.CloseConnectionsForApp(appPath, _rawConnections);
                 AddLog("BLOCAGE APP", "Application bloquée : " + appPath, pg.ProcessName, appPath);
                 RefreshAll();
-                MessageBox.Show(pg.ProcessName + " a été bloquée avec succès.", "Succès", MessageBoxButton.OK, MessageBoxImage.Information);
             }
         }
 
-        // Blocage d'IP depuis une ligne de connexion
         private void BtnBlockIpFromRow_Click(object sender, RoutedEventArgs e)
         {
             Button btn = sender as Button;
             NetworkConnection conn = btn != null ? btn.Tag as NetworkConnection : null;
-            if (conn == null) return;
+            BlockConnectionIp(conn);
+        }
 
+        private void BlockConnectionIp(NetworkConnection conn)
+        {
+            if (conn == null) return;
             string ip = conn.RemoteAddress;
-            if (string.IsNullOrEmpty(ip) || ip == "*" || ip == "0.0.0.0" || ip == "127.0.0.1")
+            if (string.IsNullOrEmpty(ip) || ip == "*" || ip == "0.0.0.0" || ip == "::" || ip == "127.0.0.1" || ip == "::1")
             {
-                MessageBox.Show("Impossible de bloquer cette adresse (adresse locale ou invalide).", "Information", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show("Impossible de bloquer une adresse locale ou indéfinie.", "Information", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
 
             MessageBoxResult res = MessageBox.Show(
-                string.Format("Bloquer immédiatement l'adresse IP {0} ?\n\nToutes les connexions vers cette adresse seront coupées net.", ip),
+                string.Format("Bloquer immédiatement l'adresse IP {0} ?", ip),
                 "Confirmation de blocage IP",
                 MessageBoxButton.YesNo,
                 MessageBoxImage.Warning);
@@ -442,22 +1401,25 @@ namespace IpScanConnect
             if (res == MessageBoxResult.Yes)
             {
                 _blockService.BlockIp(ip);
-                if (conn.Protocol == "TCP")
+                if (conn.Protocol == "TCP" && conn.IpVersion == "IPv4")
                 {
                     _netMonitor.CloseTcpConnection(conn.LocalAddress, conn.LocalPort, conn.RemoteAddress, conn.RemotePort);
                 }
 
                 AddLog("BLOCAGE IP", "IP distante bloquée : " + ip, conn.ProcessName, ip);
                 RefreshAll();
-                MessageBox.Show("L'adresse IP " + ip + " est désormais bloquée.", "Succès", MessageBoxButton.OK, MessageBoxImage.Information);
             }
         }
 
-        // Couper la connexion TCP (Reset TCP)
         private void BtnCloseTcpFromRow_Click(object sender, RoutedEventArgs e)
         {
             Button btn = sender as Button;
             NetworkConnection conn = btn != null ? btn.Tag as NetworkConnection : null;
+            CloseTcpConnectionRow(conn);
+        }
+
+        private void CloseTcpConnectionRow(NetworkConnection conn)
+        {
             if (conn == null || conn.Protocol != "TCP") return;
 
             bool ok = _netMonitor.CloseTcpConnection(conn.LocalAddress, conn.LocalPort, conn.RemoteAddress, conn.RemotePort);
@@ -465,21 +1427,21 @@ namespace IpScanConnect
             {
                 AddLog("TCP RESET", string.Format("Connexion fermée : {0} -> {1}", conn.LocalDisplay, conn.RemoteDisplay), conn.ProcessName, conn.RemoteDisplay);
                 RefreshConnectionsOnly();
-                TxtStatusBar.Text = "Connexion fermée avec succès.";
+                TxtStatusBar.Text = "Connexion TCP réinitialisée.";
             }
             else
             {
-                MessageBox.Show("Impossible de réinitialiser la connexion (peut-être déjà inactive).", "Erreur", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MessageBox.Show("Impossible de réinitialiser cette connexion (socket IPv6 ou déjà fermé).", "Information", MessageBoxButton.OK, MessageBoxImage.Information);
             }
         }
 
         #endregion
 
-        #region Gestion des Règles de Blocage
+        #region Gestion des Règles & Sandbox Dossier
 
         private void BtnManualBlockIp_Click(object sender, RoutedEventArgs e)
         {
-            InputDialog dlg = new InputDialog("Bloquer une IP", "Entrez l'adresse IPv4 à bloquer (ex: 185.199.110.153) :");
+            InputDialog dlg = new InputDialog("Bloquer une IP", "Entrez l'adresse IPv4 ou IPv6 à bloquer :");
             dlg.Owner = this;
             if (dlg.ShowDialog() == true && !string.IsNullOrWhiteSpace(dlg.InputText))
             {
@@ -487,7 +1449,6 @@ namespace IpScanConnect
                 _blockService.BlockIp(ip);
                 AddLog("BLOCAGE IP MANUEL", "IP bloquée manuellement : " + ip, "Manuel", ip);
                 RefreshAll();
-                MessageBox.Show("L'adresse IP " + ip + " a été bloquée.", "Succès", MessageBoxButton.OK, MessageBoxImage.Information);
             }
         }
 
@@ -501,10 +1462,47 @@ namespace IpScanConnect
             {
                 string exePath = ofd.FileName;
                 _blockService.BlockApp(exePath);
+                _netMonitor.CloseConnectionsForApp(exePath, _rawConnections);
                 string fileName = Path.GetFileName(exePath);
                 AddLog("BLOCAGE APP MANUEL", "Application bloquée : " + exePath, fileName, exePath);
                 RefreshAll();
-                MessageBox.Show("L'application " + fileName + " a été bloquée avec succès.", "Succès", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+        }
+
+        private void BtnManualBlockFolder_Click(object sender, RoutedEventArgs e)
+        {
+            using (var fbd = new System.Windows.Forms.FolderBrowserDialog())
+            {
+                fbd.Description = "Sélectionnez le dossier à isoler (Sandbox - tous les .exe présents et futurs seront bloqués) :";
+                if (fbd.ShowDialog() == System.Windows.Forms.DialogResult.OK && !string.IsNullOrWhiteSpace(fbd.SelectedPath))
+                {
+                    ExecuteFolderSandbox(fbd.SelectedPath);
+                }
+            }
+        }
+
+        private void ExecuteFolderSandbox(string folderPath)
+        {
+            try
+            {
+                int count = _blockService.BlockFolder(folderPath);
+                foreach (NetworkConnection c in _rawConnections)
+                {
+                    if (!string.IsNullOrEmpty(c.ProcessPath) && BlockRuleService.IsPathInsideFolder(c.ProcessPath, folderPath))
+                    {
+                        _netMonitor.CloseConnectionsForApp(c.ProcessPath, _rawConnections);
+                    }
+                }
+
+                AddLog("SANDBOX DOSSIER", string.Format("Dossier isolé ({0} .exe bloqués) : {1}", count, folderPath), "Sandbox", folderPath);
+                RefreshAll();
+                MessageBox.Show(
+                    string.Format("Sandbox activé sur :\n{0}\n\n{1} exécutable(s) bloqué(s). Tout nouveau .exe déposé dans ce dossier sera également bloqué.", folderPath, count),
+                    "Sandbox Dossier Activé", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Erreur lors du blocage du dossier : " + ex.Message, "Erreur", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
@@ -518,43 +1516,307 @@ namespace IpScanConnect
             }
 
             if (sel.RuleType == "IP")
-            {
                 _blockService.UnblockIp(sel.Target);
-            }
             else if (sel.RuleType == "Application")
-            {
                 _blockService.UnblockApp(sel.Target);
-            }
+            else if (sel.RuleType == "Dossier Sandbox")
+                _blockService.UnblockFolder(sel.Target);
             else
-            {
                 _blockService.RemoveRule(sel.RuleName);
-            }
 
             AddLog("DEBLOCAGE", "Règle supprimée : " + sel.DisplayName, "Utilisateur", sel.Target);
             RefreshAll();
-            MessageBox.Show("La règle a été supprimée et la cible débloquée.", "Succès", MessageBoxButton.OK, MessageBoxImage.Information);
         }
 
-        private void BtnUnblockAll_Click(object sender, RoutedEventArgs e)
+        private void BtnClearAttempts_Click(object sender, RoutedEventArgs e)
         {
-            if (_rulesList.Count == 0)
+            _blockedAttemptsList.Clear();
+            _recentAttemptKeys.Clear();
+        }
+
+        #endregion
+
+        #region IA Gemini
+
+        private string CurrentGeminiKey
+        {
+            get
             {
-                MessageBox.Show("Aucune règle de blocage active.", "Information", MessageBoxButton.OK, MessageBoxImage.Information);
+                return _isKeyVisible ? (TxtGeminiKeyVisible.Text ?? "").Trim() : (PwdGeminiKey.Password ?? "").Trim();
+            }
+        }
+
+        private string CurrentGeminiModel
+        {
+            get
+            {
+                ComboBoxItem item = CmbGeminiModel.SelectedItem as ComboBoxItem;
+                return item != null ? item.Content.ToString() : "gemini-2.5-flash";
+            }
+        }
+
+        private void BtnToggleKeyVis_Click(object sender, RoutedEventArgs e)
+        {
+            if (_isKeyVisible)
+            {
+                PwdGeminiKey.Password = TxtGeminiKeyVisible.Text;
+                TxtGeminiKeyVisible.Visibility = Visibility.Collapsed;
+                PwdGeminiKey.Visibility = Visibility.Visible;
+                _isKeyVisible = false;
+            }
+            else
+            {
+                TxtGeminiKeyVisible.Text = PwdGeminiKey.Password;
+                PwdGeminiKey.Visibility = Visibility.Collapsed;
+                TxtGeminiKeyVisible.Visibility = Visibility.Visible;
+                _isKeyVisible = true;
+            }
+        }
+
+        private void BtnSaveGeminiKey_Click(object sender, RoutedEventArgs e)
+        {
+            string key = CurrentGeminiKey;
+            _settingsService.Current.GeminiApiKey = key;
+            _settingsService.Current.GeminiModel = CurrentGeminiModel;
+            _settingsService.Save();
+
+            TxtStatusBar.Text = string.IsNullOrEmpty(key)
+                ? "Clé API Gemini effacée."
+                : "Clé API Gemini enregistrée localement.";
+            MessageBox.Show("Configuration Gemini enregistrée localement.", "IA Gemini", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+
+        private async void BtnAnalyzeApp_Click(object sender, RoutedEventArgs e)
+        {
+            e.Handled = true;
+            Button btn = sender as Button;
+            ProcessGroup pg = btn != null ? btn.Tag as ProcessGroup : null;
+            if (pg == null) return;
+
+            await AnalyzeSingleApp(pg);
+        }
+
+        private async Task AnalyzeSingleApp(ProcessGroup pg)
+        {
+            if (pg == null) return;
+            string apiKey = CurrentGeminiKey;
+            if (string.IsNullOrEmpty(apiKey))
+            {
+                MessageBox.Show("Renseignez d'abord votre clé API Gemini dans l'onglet '✨ IA Gemini'.", "Clé API requise", MessageBoxButton.OK, MessageBoxImage.Information);
+                MainTabs.SelectedIndex = 2;
+                PwdGeminiKey.Focus();
                 return;
             }
 
-            MessageBoxResult res = MessageBox.Show(
-                "Voulez-vous supprimer TOUTES les règles de blocage créées par IpScanConnect ?\n\nToutes les IP et applications bloquées seront autorisées à nouveau.",
-                "Tout débloquer",
-                MessageBoxButton.YesNo,
-                MessageBoxImage.Warning);
+            _settingsService.Current.GeminiApiKey = apiKey;
+            _settingsService.Current.GeminiModel = CurrentGeminiModel;
+            _settingsService.Save();
 
-            if (res == MessageBoxResult.Yes)
+            AiAnalysisWindow win = new AiAnalysisWindow(pg.ProcessName);
+            win.Owner = this;
+            win.Show();
+
+            try
             {
-                _blockService.UnblockAll();
-                AddLog("TOUT DEBLOQUER", "Toutes les règles IpScanConnect ont été supprimées", "Utilisateur", "*");
-                RefreshAll();
-                MessageBox.Show("Toutes les règles ont été supprimées.", "Succès", MessageBoxButton.OK, MessageBoxImage.Information);
+                GeminiAnalysisResult result = await _geminiService.AnalyzeAppAsync(apiKey, CurrentGeminiModel, pg);
+                win.SetResult(result);
+                AddAiHistoryAndShow(result);
+                AddLog("IA GEMINI", "Analyse terminée pour " + pg.ProcessName + " (" + result.RiskLevel + ")", pg.ProcessName);
+            }
+            catch (Exception ex)
+            {
+                win.SetError(ex.Message);
+            }
+        }
+
+        private async void BtnAnalyzePcGlobal_Click(object sender, RoutedEventArgs e)
+        {
+            string apiKey = CurrentGeminiKey;
+            if (string.IsNullOrEmpty(apiKey))
+            {
+                MessageBox.Show("Veuillez d'abord entrer votre clé API Gemini.", "Clé API requise", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            _settingsService.Current.GeminiApiKey = apiKey;
+            _settingsService.Current.GeminiModel = CurrentGeminiModel;
+            _settingsService.Save();
+
+            BtnAnalyzePcGlobal.IsEnabled = false;
+            ProgressGlobalAi.Visibility = Visibility.Visible;
+            TxtGlobalAiTitle.Text = "✨ Analyse globale du trafic du PC en cours...";
+            TxtGlobalAiSummary.Text = "Envoi des ports ouverts, débits, applications et destinations à Gemini...";
+            TxtGlobalAiRisk.Text = "⏳ En cours";
+
+            try
+            {
+                // Construire la vue complète par app même si on est en mode Catégorie
+                List<ProcessGroup> appGroups = _rawConnections
+                    .GroupBy(c => c.ProcessName ?? "Inconnu")
+                    .Select(g =>
+                    {
+                        var conns = g.ToList();
+                        var pg = new ProcessGroup
+                        {
+                            ProcessName = g.Key,
+                            ProcessId = conns[0].ProcessId,
+                            ProcessPath = conns[0].ProcessPath,
+                            Category = conns[0].Category,
+                            AllConnections = conns
+                        };
+                        pg.RecalculateMetrics();
+                        return pg;
+                    })
+                    .ToList();
+
+                GeminiAnalysisResult result = await _geminiService.AnalyzeGlobalTrafficAsync(
+                    apiKey, CurrentGeminiModel, appGroups, _rawConnections, _rulesList.Count);
+
+                AddAiHistoryAndShow(result);
+                AddLog("IA GEMINI GLOBAL", "Analyse PC complet terminée (" + result.RiskLevel + ")", "PC Global");
+            }
+            catch (Exception ex)
+            {
+                TxtGlobalAiTitle.Text = "Erreur lors de l'analyse Gemini";
+                TxtGlobalAiSummary.Text = ex.Message;
+                TxtGlobalAiRisk.Text = "❌ Erreur";
+            }
+            finally
+            {
+                ProgressGlobalAi.Visibility = Visibility.Collapsed;
+                BtnAnalyzePcGlobal.IsEnabled = true;
+            }
+        }
+
+        private void AddAiHistoryAndShow(GeminiAnalysisResult result)
+        {
+            if (result == null) return;
+            _aiHistoryList.Insert(0, result);
+            while (_aiHistoryList.Count > 40)
+                _aiHistoryList.RemoveAt(_aiHistoryList.Count - 1);
+
+            DisplayAnalysisInGlobalTab(result);
+        }
+
+        private void DisplayAnalysisInGlobalTab(GeminiAnalysisResult result)
+        {
+            if (result == null) return;
+            TxtGlobalAiTitle.Text = string.Format("✨ {0} ({1})", result.TargetName, result.Scope);
+            TxtGlobalAiSummary.Text = string.IsNullOrEmpty(result.Summary) ? "Analyse disponible ci-dessous." : result.Summary;
+            TxtGlobalWhatItDoes.Text = string.IsNullOrEmpty(result.WhatItDoes) ? "-" : result.WhatItDoes;
+            TxtGlobalUtility.Text = string.IsNullOrEmpty(result.Utility) ? "-" : result.Utility;
+            TxtGlobalRisks.Text = string.IsNullOrEmpty(result.Risks) ? "-" : result.Risks;
+            TxtGlobalCutImpact.Text = string.IsNullOrEmpty(result.CutInternetImpact) ? "-" : result.CutInternetImpact;
+
+            string level = (result.RiskLevel ?? "Analysé").Trim();
+            TxtGlobalAiRisk.Text = level;
+            string low = level.ToLowerInvariant();
+            if (low.Contains("élev") || low.Contains("elev") || low.Contains("haut") || low.Contains("crit"))
+            {
+                GlobalRiskBadge.Background = new SolidColorBrush(System.Windows.Media.Color.FromRgb(69, 10, 10));
+                GlobalRiskBadge.BorderBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(239, 68, 68));
+                TxtGlobalAiRisk.Foreground = new SolidColorBrush(System.Windows.Media.Color.FromRgb(252, 165, 165));
+            }
+            else if (low.Contains("mod") || low.Contains("moy"))
+            {
+                GlobalRiskBadge.Background = new SolidColorBrush(System.Windows.Media.Color.FromRgb(69, 26, 3));
+                GlobalRiskBadge.BorderBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(245, 158, 11));
+                TxtGlobalAiRisk.Foreground = new SolidColorBrush(System.Windows.Media.Color.FromRgb(253, 230, 138));
+            }
+            else
+            {
+                GlobalRiskBadge.Background = new SolidColorBrush(System.Windows.Media.Color.FromRgb(6, 78, 59));
+                GlobalRiskBadge.BorderBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(16, 185, 129));
+                TxtGlobalAiRisk.Foreground = new SolidColorBrush(System.Windows.Media.Color.FromRgb(110, 231, 183));
+            }
+        }
+
+        private void ListAiHistory_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            GeminiAnalysisResult sel = ListAiHistory.SelectedItem as GeminiAnalysisResult;
+            if (sel != null)
+                DisplayAnalysisInGlobalTab(sel);
+        }
+
+        #endregion
+
+        #region Redirections Hosts
+
+        private void BtnAddRedirect_Click(object sender, RoutedEventArgs e)
+        {
+            string source = HostsRedirectService.NormalizeHost(TxtRedirectDomain.Text);
+            string targetInput = (TxtRedirectTarget.Text ?? "").Trim();
+            if (string.IsNullOrEmpty(targetInput)) targetInput = "127.0.0.1";
+
+            if (string.IsNullOrEmpty(source))
+            {
+                MessageBox.Show("Entrez un domaine source valide (ex: telemetry.exemple.com).", "Domaine requis", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            string resolvedIp = HostsRedirectService.ResolveTargetToIp(targetInput);
+            if (string.IsNullOrEmpty(resolvedIp))
+            {
+                MessageBox.Show("Impossible de résoudre la cible '" + targetInput + "' vers une adresse IP.", "Cible invalide", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            RedirectRule existing = _redirectRulesList.FirstOrDefault(r => string.Equals(r.SourceDomain, source, StringComparison.OrdinalIgnoreCase));
+            if (existing != null)
+            {
+                existing.TargetAddress = resolvedIp;
+                existing.IsEnabled = true;
+            }
+            else
+            {
+                _redirectRulesList.Add(new RedirectRule
+                {
+                    SourceDomain = source,
+                    TargetAddress = resolvedIp,
+                    IsEnabled = true
+                });
+            }
+
+            SaveAndApplyRedirects();
+            TxtRedirectDomain.Text = "";
+            AddLog("REDIRECTION", string.Format("{0} -> {1}", source, resolvedIp), "Hosts", source);
+        }
+
+        private void BtnToggleRedirect_Click(object sender, RoutedEventArgs e)
+        {
+            Button btn = sender as Button;
+            RedirectRule rule = btn != null ? btn.Tag as RedirectRule : null;
+            if (rule == null) return;
+
+            rule.IsEnabled = !rule.IsEnabled;
+            SaveAndApplyRedirects();
+            if (_redirectsView != null) _redirectsView.Refresh();
+        }
+
+        private void BtnDeleteRedirect_Click(object sender, RoutedEventArgs e)
+        {
+            Button btn = sender as Button;
+            RedirectRule rule = btn != null ? btn.Tag as RedirectRule : null;
+            if (rule == null) return;
+
+            _redirectRulesList.Remove(rule);
+            SaveAndApplyRedirects();
+            AddLog("REDIRECTION SUPPRIMEE", rule.SourceDomain, "Hosts", rule.SourceDomain);
+        }
+
+        private void SaveAndApplyRedirects()
+        {
+            _settingsService.Current.RedirectRules = _redirectRulesList.ToList();
+            _settingsService.Save();
+
+            string err;
+            if (!_hostsRedirectService.ApplyRedirects(_redirectRulesList, out err))
+            {
+                MessageBox.Show("Erreur lors de la mise à jour du fichier hosts : " + err, "Redirection", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            else
+            {
+                TxtStatusBar.Text = "Redirections hosts appliquées et cache DNS vidé.";
             }
         }
 
@@ -586,7 +1848,7 @@ namespace IpScanConnect
         private void BtnClearLogs_Click(object sender, RoutedEventArgs e)
         {
             _logsList.Clear();
-            AddLog("SYSTEME", "Journal d'événements effacé par l'utilisateur", "Système");
+            AddLog("SYSTEME", "Journal effacé par l'utilisateur", "Système");
         }
 
         private void BtnExportLogs_Click(object sender, RoutedEventArgs e)

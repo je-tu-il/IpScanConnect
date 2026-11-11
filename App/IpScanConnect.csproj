@@ -44,6 +44,8 @@
     <Reference Include="Microsoft.CSharp" />
     <Reference Include="System.Data" />
     <Reference Include="System.Drawing" />
+    <Reference Include="System.Net.Http" />
+    <Reference Include="System.Web.Extensions" />
     <Reference Include="System.Xml" />
     <Reference Include="System.Xaml">
       <RequiredTargetFramework>4.0</RequiredTargetFramework>
@@ -51,6 +53,7 @@
     <Reference Include="WindowsBase" />
     <Reference Include="PresentationCore" />
     <Reference Include="PresentationFramework" />
+    <Reference Include="System.Windows.Forms" />
   </ItemGroup>
 
   <ItemGroup>
@@ -66,6 +69,10 @@
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </Page>
+    <Page Include="AiAnalysisWindow.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
     <Compile Include="App.xaml.cs">
       <DependentUpon>App.xaml</DependentUpon>
     </Compile>
@@ -75,13 +82,25 @@
     <Compile Include="InputDialog.xaml.cs">
       <DependentUpon>InputDialog.xaml</DependentUpon>
     </Compile>
+    <Compile Include="AiAnalysisWindow.xaml.cs">
+      <DependentUpon>AiAnalysisWindow.xaml</DependentUpon>
+    </Compile>
     <Compile Include="Models\NetworkConnection.cs" />
     <Compile Include="Models\ProcessGroup.cs" />
     <Compile Include="Models\BlockedRule.cs" />
     <Compile Include="Models\LogEvent.cs" />
+    <Compile Include="Models\AppSettings.cs" />
+    <Compile Include="Models\BlockedAttempt.cs" />
+    <Compile Include="Models\GeminiAnalysisResult.cs" />
+    <Compile Include="Models\RedirectRule.cs" />
     <Compile Include="Services\KernelDriverClient.cs" />
     <Compile Include="Services\BlockRuleService.cs" />
     <Compile Include="Services\NetworkMonitorService.cs" />
+    <Compile Include="Services\SettingsService.cs" />
+    <Compile Include="Services\IconCacheService.cs" />
+    <Compile Include="Services\HostsRedirectService.cs" />
+    <Compile Include="Services\WfpAuditService.cs" />
+    <Compile Include="Services\GeminiAiService.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
 

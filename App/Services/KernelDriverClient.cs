@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Net;
 using System.Runtime.InteropServices;
 using IpScanConnect.Models;
@@ -47,6 +48,28 @@ namespace IpScanConnect.Services
             public uint totalBlockedConnections;
             [MarshalAs(UnmanagedType.I1)]
             public bool isCalloutRegistered;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct IPSCAN_LOG_ENTRY
+        {
+            public long timestamp;
+            public ulong processId;
+            public uint localIp;
+            public uint remoteIp;
+            public ushort localPort;
+            public ushort remotePort;
+            public byte protocol;
+            [MarshalAs(UnmanagedType.I1)]
+            public bool blocked;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct IPSCAN_LOG_BATCH
+        {
+            public uint count;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 32)]
+            public IPSCAN_LOG_ENTRY[] entries;
         }
 
         [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Auto)]
@@ -156,6 +179,53 @@ namespace IpScanConnect.Services
             return DeviceIoControl(_hDevice, IOCTL_IPSCAN_CLEAR_RULES, IntPtr.Zero, 0, IntPtr.Zero, 0, out bytesRet, IntPtr.Zero);
         }
 
+        public List<BlockedAttempt> GetBlockedLogs()
+        {
+            List<BlockedAttempt> list = new List<BlockedAttempt>();
+            if (!IsDriverLoaded) return list;
+
+            int size = Marshal.SizeOf(typeof(IPSCAN_LOG_BATCH));
+            IntPtr buffer = Marshal.AllocHGlobal(size);
+            try
+            {
+                uint bytesRet;
+                bool ok = DeviceIoControl(_hDevice, IOCTL_IPSCAN_GET_LOGS, IntPtr.Zero, 0, buffer, (uint)size, out bytesRet, IntPtr.Zero);
+                if (ok)
+                {
+                    IPSCAN_LOG_BATCH batch = (IPSCAN_LOG_BATCH)Marshal.PtrToStructure(buffer, typeof(IPSCAN_LOG_BATCH));
+                    uint count = Math.Min(batch.count, 32u);
+                    if (batch.entries != null)
+                    {
+                        for (int i = 0; i < (int)count; i++)
+                        {
+                            IPSCAN_LOG_ENTRY entry = batch.entries[i];
+                            if (!entry.blocked) continue;
+                            list.Add(new BlockedAttempt
+                            {
+                                Timestamp = DateTime.FromFileTime(entry.timestamp),
+                                Source = "Kernel Driver",
+                                ProcessId = (int)entry.processId,
+                                ProcessName = "PID " + entry.processId,
+                                Protocol = entry.protocol == 17 ? "UDP" : "TCP",
+                                LocalEndpoint = string.Format("{0}:{1}", UintToIpString(entry.localIp), entry.localPort),
+                                RemoteAddress = UintToIpString(entry.remoteIp),
+                                RemotePort = entry.remotePort,
+                                MatchedRule = "Driver WFP Callout",
+                                Status = "🚫 Bloqué au noyau"
+                            });
+                        }
+                    }
+                }
+            }
+            catch { }
+            finally
+            {
+                Marshal.FreeHGlobal(buffer);
+            }
+
+            return list;
+        }
+
         public bool GetStatus(out KERNEL_STATUS status)
         {
             status = new KERNEL_STATUS();
@@ -179,6 +249,15 @@ namespace IpScanConnect.Services
             }
         }
 
+        private static string UintToIpString(uint ipVal)
+        {
+            return string.Format("{0}.{1}.{2}.{3}",
+                (ipVal >> 24) & 0xFF,
+                (ipVal >> 16) & 0xFF,
+                (ipVal >> 8) & 0xFF,
+                ipVal & 0xFF);
+        }
+
         private static uint ConvertIpToUint(string ipAddress)
         {
             if (string.IsNullOrEmpty(ipAddress)) return 0;
@@ -188,7 +267,6 @@ namespace IpScanConnect.Services
                 byte[] bytes = ip.GetAddressBytes();
                 if (bytes.Length == 4)
                 {
-                    // Big-endian network order vers integer
                     return ((uint)bytes[0] << 24) | ((uint)bytes[1] << 16) | ((uint)bytes[2] << 8) | (uint)bytes[3];
                 }
             }
