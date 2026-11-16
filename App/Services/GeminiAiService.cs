@@ -125,12 +125,32 @@ namespace IpScanConnect.Services
             return sb.ToString();
         }
 
-        public async Task<GeminiAnalysisResult> AnalyzeAppAsync(string apiKey, string model, ProcessGroup group)
+        public static string DetectProvider(string apiKey, string defaultProvider = "OxionAi")
+        {
+            if (string.IsNullOrWhiteSpace(apiKey)) return defaultProvider;
+            string trimmed = apiKey.Trim();
+            if (trimmed.StartsWith("AIza", StringComparison.Ordinal))
+                return "Gemini";
+            if (trimmed.StartsWith("cc_", StringComparison.OrdinalIgnoreCase) ||
+                trimmed.StartsWith("ox_", StringComparison.OrdinalIgnoreCase) ||
+                trimmed.StartsWith("sk-", StringComparison.OrdinalIgnoreCase))
+                return "OxionAi";
+            return defaultProvider;
+        }
+
+        public Task<GeminiAnalysisResult> AnalyzeAppAsync(string apiKey, string model, ProcessGroup group)
+        {
+            string provider = DetectProvider(apiKey, "OxionAi");
+            string defaultModel = string.Equals(provider, "Gemini", StringComparison.OrdinalIgnoreCase) ? "gemini-2.5-flash" : "gpt-4o-mini";
+            return AnalyzeAppAsync(apiKey, string.IsNullOrEmpty(model) ? defaultModel : model, group, provider, "https://oxionai.com/v1");
+        }
+
+        public async Task<GeminiAnalysisResult> AnalyzeAppAsync(string apiKey, string model, ProcessGroup group, string provider, string baseUrl)
         {
             string telemetry = BuildAppTelemetrySummary(group);
             string prompt =
                 "Tu es un expert en cybersécurité réseau Windows. Analyse les données télémétriques ci-dessous d'une application observée sur le PC de l'utilisateur.\n" +
-                "Réponds STRICTEMENT en JSON valide (sans texte hors JSON) avec exactement ces 5 clés en français :\n" +
+                "Réponds STRICTEMENT en JSON valide (sans texte hors JSON, sans balises markdown ```) avec exactement ces 5 clés en français :\n" +
                 "{\n" +
                 "  \"risk_level\": \"Faible | Modéré | Élevé\",\n" +
                 "  \"summary\": \"Synthèse courte en 1-2 phrases\",\n" +
@@ -141,15 +161,22 @@ namespace IpScanConnect.Services
                 "}\n\n" +
                 "Données observées :\n" + telemetry;
 
-            return await SendPromptAsync(apiKey, model, group.ProcessName, "Application", prompt);
+            return await SendPromptAsync(apiKey, model, group.ProcessName, "Application", prompt, provider, baseUrl);
         }
 
-        public async Task<GeminiAnalysisResult> AnalyzeGlobalTrafficAsync(string apiKey, string model, IList<ProcessGroup> appGroups, IList<NetworkConnection> allConnections, int blockedRulesCount)
+        public Task<GeminiAnalysisResult> AnalyzeGlobalTrafficAsync(string apiKey, string model, IList<ProcessGroup> appGroups, IList<NetworkConnection> allConnections, int blockedRulesCount)
+        {
+            string provider = DetectProvider(apiKey, "OxionAi");
+            string defaultModel = string.Equals(provider, "Gemini", StringComparison.OrdinalIgnoreCase) ? "gemini-2.5-flash" : "gpt-4o-mini";
+            return AnalyzeGlobalTrafficAsync(apiKey, string.IsNullOrEmpty(model) ? defaultModel : model, appGroups, allConnections, blockedRulesCount, provider, "https://oxionai.com/v1");
+        }
+
+        public async Task<GeminiAnalysisResult> AnalyzeGlobalTrafficAsync(string apiKey, string model, IList<ProcessGroup> appGroups, IList<NetworkConnection> allConnections, int blockedRulesCount, string provider, string baseUrl)
         {
             string telemetry = BuildGlobalTelemetrySummary(appGroups, allConnections, blockedRulesCount);
             string prompt =
                 "Tu es un expert en cybersécurité réseau Windows. Analyse l'ensemble du trafic réseau actuel du PC ci-dessous.\n" +
-                "Réponds STRICTEMENT en JSON valide (sans texte hors JSON) avec exactement ces 6 clés en français :\n" +
+                "Réponds STRICTEMENT en JSON valide (sans texte hors JSON, sans balises markdown ```) avec exactement ces 6 clés en français :\n" +
                 "{\n" +
                 "  \"risk_level\": \"Faible | Modéré | Élevé\",\n" +
                 "  \"summary\": \"Bilan global en 2-3 phrases de la santé réseau du PC\",\n" +
@@ -160,14 +187,69 @@ namespace IpScanConnect.Services
                 "}\n\n" +
                 "Télémétrie du PC :\n" + telemetry;
 
-            return await SendPromptAsync(apiKey, model, "Trafic Global du PC", "PC Global", prompt);
+            return await SendPromptAsync(apiKey, model, "Trafic Global du PC", "PC Global", prompt, provider, baseUrl);
         }
 
-        private async Task<GeminiAnalysisResult> SendPromptAsync(string apiKey, string model, string targetName, string scope, string prompt)
+        private async Task<GeminiAnalysisResult> SendPromptAsync(string apiKey, string model, string targetName, string scope, string prompt, string provider, string baseUrl)
         {
             if (string.IsNullOrWhiteSpace(apiKey))
-                throw new InvalidOperationException("Veuillez d'abord renseigner votre clé API Gemini.");
+                throw new InvalidOperationException("Veuillez d'abord renseigner votre clé API (" + (provider ?? "Oxion AI") + ").");
 
+            bool isGemini = string.Equals(provider, "Gemini", StringComparison.OrdinalIgnoreCase);
+            if (isGemini)
+            {
+                return await SendGeminiPromptAsync(apiKey, model, targetName, scope, prompt);
+            }
+            return await SendOxionAiPromptAsync(apiKey, model, targetName, scope, prompt, baseUrl, provider ?? "Oxion AI");
+        }
+
+        private async Task<GeminiAnalysisResult> SendOxionAiPromptAsync(string apiKey, string model, string targetName, string scope, string prompt, string baseUrl, string providerName)
+        {
+            string chosenModel = string.IsNullOrWhiteSpace(model) ? "gpt-4o-mini" : model.Trim();
+            string root = string.IsNullOrWhiteSpace(baseUrl) ? "https://oxionai.com/v1" : baseUrl.Trim().TrimEnd('/');
+            string url = root + "/chat/completions";
+
+            JavaScriptSerializer ser = new JavaScriptSerializer();
+            Dictionary<string, object> payload = new Dictionary<string, object>();
+            payload["model"] = chosenModel;
+            payload["temperature"] = 0.2;
+            payload["messages"] = new object[]
+            {
+                new Dictionary<string, object>
+                {
+                    { "role", "system" },
+                    { "content", "Tu es un expert en cybersécurité réseau Windows. Réponds STRICTEMENT en JSON valide (sans texte hors JSON, sans balises markdown) avec les clés demandées en français." }
+                },
+                new Dictionary<string, object>
+                {
+                    { "role", "user" },
+                    { "content", prompt }
+                }
+            };
+
+            string bodyJson = ser.Serialize(payload);
+            using (HttpRequestMessage req = new HttpRequestMessage(HttpMethod.Post, url))
+            {
+                req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey.Trim());
+                req.Content = new StringContent(bodyJson, Encoding.UTF8, "application/json");
+
+                using (HttpResponseMessage resp = await _httpClient.SendAsync(req))
+                {
+                    string respText = await resp.Content.ReadAsStringAsync();
+                    if (!resp.IsSuccessStatusCode)
+                    {
+                        string errMsg = ExtractOpenAiError(respText, (int)resp.StatusCode, providerName);
+                        throw new InvalidOperationException(errMsg);
+                    }
+
+                    string modelText = ExtractOpenAiText(respText);
+                    return ParseAnalysisResult(targetName, scope, modelText);
+                }
+            }
+        }
+
+        private async Task<GeminiAnalysisResult> SendGeminiPromptAsync(string apiKey, string model, string targetName, string scope, string prompt)
+        {
             string chosenModel = string.IsNullOrWhiteSpace(model) ? "gemini-2.5-flash" : model.Trim();
             string url = string.Format(
                 "https://generativelanguage.googleapis.com/v1beta/models/{0}:generateContent?key={1}",
@@ -208,6 +290,29 @@ namespace IpScanConnect.Services
             }
         }
 
+        private static string ExtractOpenAiError(string json, int statusCode, string providerName)
+        {
+            try
+            {
+                JavaScriptSerializer ser = new JavaScriptSerializer();
+                Dictionary<string, object> root = ser.Deserialize<Dictionary<string, object>>(json);
+                if (root != null && root.ContainsKey("error"))
+                {
+                    Dictionary<string, object> err = root["error"] as Dictionary<string, object>;
+                    if (err != null && err.ContainsKey("message"))
+                    {
+                        return string.Format("Erreur {0} ({1}) : {2}", providerName, statusCode, err["message"]);
+                    }
+                    if (root["error"] is string)
+                    {
+                        return string.Format("Erreur {0} ({1}) : {2}", providerName, statusCode, root["error"]);
+                    }
+                }
+            }
+            catch { }
+            return string.Format("Erreur HTTP {0} lors de l'appel {1}.", statusCode, providerName);
+        }
+
         private static string ExtractGeminiError(string json, int statusCode)
         {
             try
@@ -223,6 +328,59 @@ namespace IpScanConnect.Services
             }
             catch { }
             return string.Format("Erreur HTTP {0} lors de l'appel Gemini.", statusCode);
+        }
+
+        public static string ExtractOpenAiText(string apiResponseJson)
+        {
+            if (string.IsNullOrWhiteSpace(apiResponseJson)) return "";
+            try
+            {
+                JavaScriptSerializer ser = new JavaScriptSerializer();
+                Dictionary<string, object> root = ser.Deserialize<Dictionary<string, object>>(apiResponseJson);
+                if (root != null && root.ContainsKey("choices"))
+                {
+                    object[] choices = root["choices"] as object[];
+                    if (choices == null)
+                    {
+                        System.Collections.ArrayList list = root["choices"] as System.Collections.ArrayList;
+                        if (list != null && list.Count > 0)
+                        {
+                            choices = new object[list.Count];
+                            list.CopyTo(choices);
+                        }
+                    }
+
+                    if (choices != null && choices.Length > 0)
+                    {
+                        Dictionary<string, object> c0 = choices[0] as Dictionary<string, object>;
+                        if (c0 != null)
+                        {
+                            if (c0.ContainsKey("message"))
+                            {
+                                Dictionary<string, object> msg = c0["message"] as Dictionary<string, object>;
+                                if (msg != null && msg.ContainsKey("content") && msg["content"] != null)
+                                    return msg["content"].ToString();
+                            }
+                            else if (c0.ContainsKey("text") && c0["text"] != null)
+                            {
+                                return c0["text"].ToString();
+                            }
+                        }
+                    }
+                }
+            }
+            catch { }
+            return apiResponseJson;
+        }
+
+        public static string ExtractText(string apiResponseJson)
+        {
+            if (string.IsNullOrWhiteSpace(apiResponseJson)) return "";
+            if (apiResponseJson.Contains("\"choices\""))
+                return ExtractOpenAiText(apiResponseJson);
+            if (apiResponseJson.Contains("\"candidates\""))
+                return ExtractCandidateText(apiResponseJson);
+            return apiResponseJson;
         }
 
         public static string ExtractCandidateText(string apiResponseJson)

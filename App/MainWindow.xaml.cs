@@ -236,17 +236,28 @@ namespace IpScanConnect
             try
             {
                 AppSettings s = _settingsService.Current;
-                PwdGeminiKey.Password = s.GeminiApiKey ?? "";
-                TxtGeminiKeyVisible.Text = s.GeminiApiKey ?? "";
+                string provider = string.IsNullOrEmpty(s.AiProvider) ? "OxionAi" : s.AiProvider;
+                string apiKey = string.IsNullOrEmpty(s.AiApiKey) ? (s.GeminiApiKey ?? "") : s.AiApiKey;
+                string model = string.IsNullOrEmpty(s.AiModel) ? (s.GeminiModel ?? "gpt-4o-mini") : s.AiModel;
+                string baseUrl = string.IsNullOrEmpty(s.AiBaseUrl) ? "https://oxionai.com/v1" : s.AiBaseUrl;
 
-                foreach (ComboBoxItem item in CmbGeminiModel.Items)
+                PwdGeminiKey.Password = apiKey;
+                TxtGeminiKeyVisible.Text = apiKey;
+                if (TxtAiBaseUrl != null) TxtAiBaseUrl.Text = baseUrl;
+
+                if (CmbAiProvider != null)
                 {
-                    if (string.Equals(item.Content.ToString(), s.GeminiModel, StringComparison.OrdinalIgnoreCase))
+                    foreach (ComboBoxItem item in CmbAiProvider.Items)
                     {
-                        CmbGeminiModel.SelectedItem = item;
-                        break;
+                        if (item.Tag != null && string.Equals(item.Tag.ToString(), provider, StringComparison.OrdinalIgnoreCase))
+                        {
+                            CmbAiProvider.SelectedItem = item;
+                            break;
+                        }
                     }
                 }
+
+                UpdateAiProviderUi(provider, model);
 
                 ChkWatchMode.IsChecked = s.WatchModeEnabled;
                 ChkMinimizeTray.IsChecked = s.MinimizeToTrayOnClose;
@@ -1536,7 +1547,29 @@ namespace IpScanConnect
 
         #endregion
 
-        #region IA Gemini
+        #region Analyse IA (Oxion AI / Gemini / OpenAI)
+
+        private string CurrentAiProvider
+        {
+            get
+            {
+                if (CmbAiProvider == null) return "OxionAi";
+                ComboBoxItem item = CmbAiProvider.SelectedItem as ComboBoxItem;
+                if (item != null && item.Tag != null)
+                    return item.Tag.ToString();
+                return "OxionAi";
+            }
+        }
+
+        private string CurrentAiBaseUrl
+        {
+            get
+            {
+                if (TxtAiBaseUrl == null) return "https://oxionai.com/v1";
+                string url = (TxtAiBaseUrl.Text ?? "").Trim();
+                return string.IsNullOrEmpty(url) ? "https://oxionai.com/v1" : url;
+            }
+        }
 
         private string CurrentGeminiKey
         {
@@ -1550,8 +1583,91 @@ namespace IpScanConnect
         {
             get
             {
+                if (CmbGeminiModel == null) return "gpt-4o-mini";
+                if (!string.IsNullOrWhiteSpace(CmbGeminiModel.Text))
+                    return CmbGeminiModel.Text.Trim();
                 ComboBoxItem item = CmbGeminiModel.SelectedItem as ComboBoxItem;
-                return item != null ? item.Content.ToString() : "gemini-2.5-flash";
+                return item != null ? item.Content.ToString() : "gpt-4o-mini";
+            }
+        }
+
+        private void CmbAiProvider_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_isSyncingOptionsUi) return;
+            string provider = CurrentAiProvider;
+            UpdateAiProviderUi(provider, null);
+        }
+
+        private void UpdateAiProviderUi(string provider, string modelToSelect)
+        {
+            if (CmbGeminiModel == null) return;
+
+            string previousModel = modelToSelect ?? CurrentGeminiModel;
+            CmbGeminiModel.Items.Clear();
+
+            if (string.Equals(provider, "Gemini", StringComparison.OrdinalIgnoreCase))
+            {
+                if (LblAiApiKey != null) LblAiApiKey.Text = "Clé API Gemini :";
+                if (LblAiBaseUrl != null) LblAiBaseUrl.Visibility = Visibility.Collapsed;
+                if (TxtAiBaseUrl != null) TxtAiBaseUrl.Visibility = Visibility.Collapsed;
+
+                CmbGeminiModel.Items.Add(new ComboBoxItem { Content = "gemini-2.5-flash" });
+                CmbGeminiModel.Items.Add(new ComboBoxItem { Content = "gemini-2.5-pro" });
+                CmbGeminiModel.Items.Add(new ComboBoxItem { Content = "gemini-2.0-flash" });
+                if (string.IsNullOrEmpty(modelToSelect) || !previousModel.StartsWith("gemini", StringComparison.OrdinalIgnoreCase))
+                    previousModel = "gemini-2.5-flash";
+            }
+            else if (string.Equals(provider, "OpenAI", StringComparison.OrdinalIgnoreCase))
+            {
+                if (LblAiApiKey != null) LblAiApiKey.Text = "Clé API :";
+                if (LblAiBaseUrl != null) LblAiBaseUrl.Visibility = Visibility.Visible;
+                if (TxtAiBaseUrl != null)
+                {
+                    TxtAiBaseUrl.Visibility = Visibility.Visible;
+                    if (string.IsNullOrEmpty(TxtAiBaseUrl.Text) || TxtAiBaseUrl.Text.Contains("oxionai"))
+                        TxtAiBaseUrl.Text = "https://api.openai.com/v1";
+                }
+
+                CmbGeminiModel.Items.Add(new ComboBoxItem { Content = "gpt-4o-mini" });
+                CmbGeminiModel.Items.Add(new ComboBoxItem { Content = "gpt-4o" });
+                CmbGeminiModel.Items.Add(new ComboBoxItem { Content = "o3-mini" });
+                if (string.IsNullOrEmpty(modelToSelect))
+                    previousModel = "gpt-4o-mini";
+            }
+            else // OxionAi (par défaut)
+            {
+                if (LblAiApiKey != null) LblAiApiKey.Text = "Clé API Oxion AI :";
+                if (LblAiBaseUrl != null) LblAiBaseUrl.Visibility = Visibility.Visible;
+                if (TxtAiBaseUrl != null)
+                {
+                    TxtAiBaseUrl.Visibility = Visibility.Visible;
+                    if (string.IsNullOrEmpty(TxtAiBaseUrl.Text) || TxtAiBaseUrl.Text.Contains("openai.com"))
+                        TxtAiBaseUrl.Text = "https://oxionai.com/v1";
+                }
+
+                CmbGeminiModel.Items.Add(new ComboBoxItem { Content = "gpt-4o-mini" });
+                CmbGeminiModel.Items.Add(new ComboBoxItem { Content = "gpt-4o" });
+                CmbGeminiModel.Items.Add(new ComboBoxItem { Content = "claude-3-5-sonnet" });
+                CmbGeminiModel.Items.Add(new ComboBoxItem { Content = "claude-3-5-haiku" });
+                CmbGeminiModel.Items.Add(new ComboBoxItem { Content = "gemini-2.0-flash" });
+                CmbGeminiModel.Items.Add(new ComboBoxItem { Content = "deepseek-chat" });
+                if (string.IsNullOrEmpty(modelToSelect) || previousModel.StartsWith("gemini-2.5", StringComparison.OrdinalIgnoreCase))
+                    previousModel = "gpt-4o-mini";
+            }
+
+            bool found = false;
+            foreach (ComboBoxItem item in CmbGeminiModel.Items)
+            {
+                if (string.Equals(item.Content.ToString(), previousModel, StringComparison.OrdinalIgnoreCase))
+                {
+                    CmbGeminiModel.SelectedItem = item;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found)
+            {
+                CmbGeminiModel.Text = previousModel;
             }
         }
 
@@ -1576,14 +1692,45 @@ namespace IpScanConnect
         private void BtnSaveGeminiKey_Click(object sender, RoutedEventArgs e)
         {
             string key = CurrentGeminiKey;
+            string provider = CurrentAiProvider;
+            string model = CurrentGeminiModel;
+            string baseUrl = CurrentAiBaseUrl;
+
+            // Auto-détection intelligente si l'utilisateur colle une clé Gemini alors qu'Oxion est sélectionné ou vice-versa
+            string detected = GeminiAiService.DetectProvider(key, provider);
+            if (!string.Equals(detected, provider, StringComparison.OrdinalIgnoreCase))
+            {
+                provider = detected;
+                foreach (ComboBoxItem item in CmbAiProvider.Items)
+                {
+                    if (item.Tag != null && string.Equals(item.Tag.ToString(), provider, StringComparison.OrdinalIgnoreCase))
+                    {
+                        CmbAiProvider.SelectedItem = item;
+                        break;
+                    }
+                }
+            }
+
+            _settingsService.Current.AiProvider = provider;
+            _settingsService.Current.AiApiKey = key;
+            _settingsService.Current.AiModel = model;
+            _settingsService.Current.AiBaseUrl = baseUrl;
+
             _settingsService.Current.GeminiApiKey = key;
-            _settingsService.Current.GeminiModel = CurrentGeminiModel;
+            _settingsService.Current.GeminiModel = model;
             _settingsService.Save();
 
-            TxtStatusBar.Text = string.IsNullOrEmpty(key)
-                ? "Clé API Gemini effacée."
-                : "Clé API Gemini enregistrée localement.";
-            MessageBox.Show("Configuration Gemini enregistrée localement.", "IA Gemini", MessageBoxButton.OK, MessageBoxImage.Information);
+            string statusMsg = string.IsNullOrEmpty(key)
+                ? string.Format("Clé API {0} effacée.", provider)
+                : string.Format("Configuration {0} ({1}) enregistrée localement.", provider, model);
+
+            TxtStatusBar.Text = statusMsg;
+            MessageBox.Show(
+                string.Format("Configuration IA enregistrée avec succès :\n• Fournisseur : {0}\n• Modèle : {1}\n• Point d'accès : {2}",
+                    provider, model, baseUrl),
+                "Configuration IA",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
         }
 
         private async void BtnAnalyzeApp_Click(object sender, RoutedEventArgs e)
@@ -1600,16 +1747,26 @@ namespace IpScanConnect
         {
             if (pg == null) return;
             string apiKey = CurrentGeminiKey;
+            string provider = CurrentAiProvider;
+            string model = CurrentGeminiModel;
+            string baseUrl = CurrentAiBaseUrl;
+
             if (string.IsNullOrEmpty(apiKey))
             {
-                MessageBox.Show("Renseignez d'abord votre clé API Gemini dans l'onglet '✨ IA Gemini'.", "Clé API requise", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show(
+                    string.Format("Renseignez d'abord votre clé API ({0}) dans l'onglet '✨ Analyse IA'.", provider),
+                    "Clé API requise",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
                 MainTabs.SelectedIndex = 2;
                 PwdGeminiKey.Focus();
                 return;
             }
 
-            _settingsService.Current.GeminiApiKey = apiKey;
-            _settingsService.Current.GeminiModel = CurrentGeminiModel;
+            _settingsService.Current.AiProvider = provider;
+            _settingsService.Current.AiApiKey = apiKey;
+            _settingsService.Current.AiModel = model;
+            _settingsService.Current.AiBaseUrl = baseUrl;
             _settingsService.Save();
 
             AiAnalysisWindow win = new AiAnalysisWindow(pg.ProcessName);
@@ -1618,10 +1775,10 @@ namespace IpScanConnect
 
             try
             {
-                GeminiAnalysisResult result = await _geminiService.AnalyzeAppAsync(apiKey, CurrentGeminiModel, pg);
+                GeminiAnalysisResult result = await _geminiService.AnalyzeAppAsync(apiKey, model, pg, provider, baseUrl);
                 win.SetResult(result);
                 AddAiHistoryAndShow(result);
-                AddLog("IA GEMINI", "Analyse terminée pour " + pg.ProcessName + " (" + result.RiskLevel + ")", pg.ProcessName);
+                AddLog("IA " + provider.ToUpperInvariant(), "Analyse terminée pour " + pg.ProcessName + " (" + result.RiskLevel + ")", pg.ProcessName);
             }
             catch (Exception ex)
             {
@@ -1632,20 +1789,32 @@ namespace IpScanConnect
         private async void BtnAnalyzePcGlobal_Click(object sender, RoutedEventArgs e)
         {
             string apiKey = CurrentGeminiKey;
+            string provider = CurrentAiProvider;
+            string model = CurrentGeminiModel;
+            string baseUrl = CurrentAiBaseUrl;
+
             if (string.IsNullOrEmpty(apiKey))
             {
-                MessageBox.Show("Veuillez d'abord entrer votre clé API Gemini.", "Clé API requise", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MessageBox.Show(
+                    string.Format("Veuillez d'abord entrer votre clé API {0}.", provider),
+                    "Clé API requise",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                MainTabs.SelectedIndex = 2;
+                PwdGeminiKey.Focus();
                 return;
             }
 
-            _settingsService.Current.GeminiApiKey = apiKey;
-            _settingsService.Current.GeminiModel = CurrentGeminiModel;
+            _settingsService.Current.AiProvider = provider;
+            _settingsService.Current.AiApiKey = apiKey;
+            _settingsService.Current.AiModel = model;
+            _settingsService.Current.AiBaseUrl = baseUrl;
             _settingsService.Save();
 
             BtnAnalyzePcGlobal.IsEnabled = false;
             ProgressGlobalAi.Visibility = Visibility.Visible;
-            TxtGlobalAiTitle.Text = "✨ Analyse globale du trafic du PC en cours...";
-            TxtGlobalAiSummary.Text = "Envoi des ports ouverts, débits, applications et destinations à Gemini...";
+            TxtGlobalAiTitle.Text = string.Format("✨ Analyse globale du trafic du PC ({0} - {1})...", provider, model);
+            TxtGlobalAiSummary.Text = "Envoi des flux, ports ouverts, débits, applications et destinations à l'IA...";
             TxtGlobalAiRisk.Text = "⏳ En cours";
 
             try
@@ -1670,14 +1839,14 @@ namespace IpScanConnect
                     .ToList();
 
                 GeminiAnalysisResult result = await _geminiService.AnalyzeGlobalTrafficAsync(
-                    apiKey, CurrentGeminiModel, appGroups, _rawConnections, _rulesList.Count);
+                    apiKey, model, appGroups, _rawConnections, _rulesList.Count, provider, baseUrl);
 
                 AddAiHistoryAndShow(result);
-                AddLog("IA GEMINI GLOBAL", "Analyse PC complet terminée (" + result.RiskLevel + ")", "PC Global");
+                AddLog("IA GLOBAL " + provider.ToUpperInvariant(), "Analyse PC complet terminée (" + result.RiskLevel + ")", "PC Global");
             }
             catch (Exception ex)
             {
-                TxtGlobalAiTitle.Text = "Erreur lors de l'analyse Gemini";
+                TxtGlobalAiTitle.Text = "Erreur lors de l'analyse " + provider;
                 TxtGlobalAiSummary.Text = ex.Message;
                 TxtGlobalAiRisk.Text = "❌ Erreur";
             }

@@ -48,10 +48,18 @@ if errorlevel 1 goto BUILD_FAIL
 
 :COPY_EXE
 if not exist "%BIN_EXE%" goto MISSING_BIN
-copy /y "%BIN_EXE%" "%EXE_PATH%" >nul
-if errorlevel 1 goto COPY_FAIL
-echo [OK] Binaire racine mis a jour avec succes.
+copy /y "%BIN_EXE%" "%EXE_PATH%" >nul 2>&1
+if not errorlevel 1 (
+    echo [OK] Binaire racine mis a jour avec succes.
+    echo.
+    goto LAUNCH
+)
+echo [ATTENTION] Impossible d'ecraser "%EXE_PATH%" (application deja active).
+echo [INFO] Pour remplacer la copie racine, fermez IpScanConnect depuis les icones cachees (Clic droit - Quitter).
+echo [*] Lancement direct de la version fraichement compilee ("%BIN_EXE%")...
 echo.
+set "EXE_PATH=%BIN_EXE%"
+goto LAUNCH
 
 :LAUNCH
 if /i "%~1"=="--build-only" exit /b 0

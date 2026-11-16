@@ -276,11 +276,25 @@ namespace IpScanConnect.Tests
             string apiResp = "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"```json\\n{\\\"risk_level\\\":\\\"Faible\\\",\\\"summary\\\":\\\"OK\\\",\\\"what_it_does\\\":\\\"HTTPS client\\\",\\\"utility\\\":\\\"Web browsing\\\",\\\"risks\\\":\\\"Low\\\",\\\"cut_internet_impact\\\":\\\"No internet\\\"}\\n```\"}]}}]}";
             string inner = GeminiAiService.ExtractCandidateText(apiResp);
             GeminiAnalysisResult parsed = GeminiAiService.ParseAnalysisResult("demo.exe", "Application", inner);
-            AssertEqual("Faible", parsed.RiskLevel, "Parsed risk_level");
-            AssertEqual("HTTPS client", parsed.WhatItDoes, "Parsed what_it_does");
-            AssertEqual("Web browsing", parsed.Utility, "Parsed utility");
-            AssertEqual("Low", parsed.Risks, "Parsed risks");
-            AssertEqual("No internet", parsed.CutInternetImpact, "Parsed cut_internet_impact");
+            AssertEqual("Faible", parsed.RiskLevel, "Parsed risk_level (Gemini)");
+            AssertEqual("HTTPS client", parsed.WhatItDoes, "Parsed what_it_does (Gemini)");
+            AssertEqual("Web browsing", parsed.Utility, "Parsed utility (Gemini)");
+            AssertEqual("Low", parsed.Risks, "Parsed risks (Gemini)");
+            AssertEqual("No internet", parsed.CutInternetImpact, "Parsed cut_internet_impact (Gemini)");
+
+            // Test Oxion AI (Format OpenAI chat completions)
+            string oxionResp = "{\"id\":\"chatcmpl-123\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"{\\\"risk_level\\\":\\\"Modéré\\\",\\\"summary\\\":\\\"App Oxion\\\",\\\"what_it_does\\\":\\\"Oxion AI Client\\\",\\\"utility\\\":\\\"API Gateway\\\",\\\"risks\\\":\\\"Télémétrie\\\",\\\"cut_internet_impact\\\":\\\"Offline\\\"}\"}}]}";
+            string oxionInner = GeminiAiService.ExtractOpenAiText(oxionResp);
+            GeminiAnalysisResult oxionParsed = GeminiAiService.ParseAnalysisResult("oxion_demo.exe", "Application", oxionInner);
+            AssertEqual("Modéré", oxionParsed.RiskLevel, "Parsed risk_level (Oxion AI)");
+            AssertEqual("Oxion AI Client", oxionParsed.WhatItDoes, "Parsed what_it_does (Oxion AI)");
+            AssertEqual("API Gateway", oxionParsed.Utility, "Parsed utility (Oxion AI)");
+
+            // Test auto-détection du provider
+            AssertEqual("OxionAi", GeminiAiService.DetectProvider("cc_test_key_12345"), "Detect Oxion key (cc_)");
+            AssertEqual("OxionAi", GeminiAiService.DetectProvider("ox_test_key_67890"), "Detect Oxion key (ox_)");
+            AssertEqual("OxionAi", GeminiAiService.DetectProvider("sk-proj-123"), "Detect OpenAI/Oxion key (sk-)");
+            AssertEqual("Gemini", GeminiAiService.DetectProvider("AIzaSyExampleKey123"), "Detect Gemini key (AIza)");
         }
 
         private static void TestBlockRuleHelpers()

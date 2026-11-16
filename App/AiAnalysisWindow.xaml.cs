@@ -10,7 +10,7 @@ namespace IpScanConnect
         public AiAnalysisWindow(string targetName)
         {
             InitializeComponent();
-            TxtTitle.Text = "✨ Gemini IA — " + targetName;
+            TxtTitle.Text = "✨ Analyse IA — " + targetName;
         }
 
         public void SetResult(GeminiAnalysisResult result)
@@ -20,7 +20,7 @@ namespace IpScanConnect
 
             if (result == null) return;
 
-            TxtTitle.Text = "✨ Gemini IA — " + result.TargetName;
+            TxtTitle.Text = "✨ Analyse IA — " + result.TargetName;
             TxtSummary.Text = string.IsNullOrEmpty(result.Summary) ? "Analyse terminée." : result.Summary;
             TxtWhatItDoes.Text = string.IsNullOrEmpty(result.WhatItDoes) ? "Non précisé." : result.WhatItDoes;
             TxtUtility.Text = string.IsNullOrEmpty(result.Utility) ? "Non précisé." : result.Utility;
@@ -61,7 +61,7 @@ namespace IpScanConnect
             TxtRiskLevel.Foreground = new SolidColorBrush(Color.FromRgb(252, 165, 165));
             TxtSummary.Text = message;
             TxtWhatItDoes.Text = message;
-            TxtUtility.Text = "Vérifiez votre clé API Gemini et votre connexion Internet.";
+            TxtUtility.Text = "Vérifiez votre clé API (Oxion AI ou Gemini) et votre connexion Internet.";
             TxtRisks.Text = "-";
             TxtCutImpact.Text = "-";
         }

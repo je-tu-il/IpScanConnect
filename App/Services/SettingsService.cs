@@ -48,6 +48,29 @@ namespace IpScanConnect.Services
                             if (loaded.SandboxedFolders == null) loaded.SandboxedFolders = new List<string>();
                             if (loaded.RedirectRules == null) loaded.RedirectRules = new List<RedirectRule>();
                             if (string.IsNullOrEmpty(loaded.GeminiModel)) loaded.GeminiModel = "gemini-2.5-flash";
+                            if (string.IsNullOrEmpty(loaded.AiProvider)) loaded.AiProvider = "OxionAi";
+                            if (string.IsNullOrEmpty(loaded.AiBaseUrl)) loaded.AiBaseUrl = "https://oxionai.com/v1";
+                            if (string.IsNullOrEmpty(loaded.AiModel)) loaded.AiModel = "gpt-4o-mini";
+
+                            // Migration automatique de clé existante
+                            if (string.IsNullOrEmpty(loaded.AiApiKey) && !string.IsNullOrEmpty(loaded.GeminiApiKey))
+                            {
+                                loaded.AiApiKey = loaded.GeminiApiKey;
+                                string trimmed = loaded.GeminiApiKey.Trim();
+                                if (trimmed.StartsWith("cc_", StringComparison.OrdinalIgnoreCase) ||
+                                    trimmed.StartsWith("ox_", StringComparison.OrdinalIgnoreCase) ||
+                                    trimmed.StartsWith("sk-", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    loaded.AiProvider = "OxionAi";
+                                    loaded.AiModel = "gpt-4o-mini";
+                                }
+                                else if (trimmed.StartsWith("AIza", StringComparison.Ordinal))
+                                {
+                                    loaded.AiProvider = "Gemini";
+                                    loaded.AiModel = string.IsNullOrEmpty(loaded.GeminiModel) ? "gemini-2.5-flash" : loaded.GeminiModel;
+                                }
+                            }
+
                             _current = loaded;
                             return;
                         }
@@ -69,6 +92,14 @@ namespace IpScanConnect.Services
                     if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
                     {
                         Directory.CreateDirectory(dir);
+                    }
+
+                    if (_current != null)
+                    {
+                        if (string.IsNullOrEmpty(_current.GeminiApiKey) && !string.IsNullOrEmpty(_current.AiApiKey))
+                            _current.GeminiApiKey = _current.AiApiKey;
+                        if (string.IsNullOrEmpty(_current.GeminiModel) && !string.IsNullOrEmpty(_current.AiModel))
+                            _current.GeminiModel = _current.AiModel;
                     }
 
                     JavaScriptSerializer ser = new JavaScriptSerializer();

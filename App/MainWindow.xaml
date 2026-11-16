@@ -734,8 +734,8 @@
                 </Grid>
             </TabItem>
 
-            <!-- ONGLET 3 : IA GEMINI GLOBAL -->
-            <TabItem Header="✨ IA Gemini">
+            <!-- ONGLET 3 : ANALYSE IA (OXION AI / GEMINI) -->
+            <TabItem Header="✨ Analyse IA">
                 <Grid Margin="0,6,0,0">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
@@ -744,44 +744,85 @@
                         <RowDefinition Height="140"/>
                     </Grid.RowDefinitions>
 
-                    <!-- Configuration Clé API Gemini -->
+                    <!-- Configuration IA (Oxion AI / Gemini / OpenAI) -->
                     <Border Grid.Row="0" Background="#131622" BorderBrush="#28324C" BorderThickness="1" CornerRadius="7" Padding="10" Margin="0,0,0,8">
                         <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto"/>
-                                <ColumnDefinition Width="300"/>
-                                <ColumnDefinition Width="Auto"/>
-                                <ColumnDefinition Width="165"/>
-                                <ColumnDefinition Width="Auto"/>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
 
-                            <TextBlock Grid.Column="0" Text="Clé API Gemini :" FontSize="12" FontWeight="SemiBold" Foreground="#CBD5E1" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <!-- Ligne 1 : Fournisseur, Modèle et URL de base -->
+                            <Grid Grid.Row="0" Margin="0,0,0,8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="195"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="170"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
 
-                            <Grid Grid.Column="1" Margin="0,0,6,0">
-                                <PasswordBox x:Name="PwdGeminiKey" Height="28" Padding="6,3" Background="#0A0C14" Foreground="#FFFFFF" BorderBrush="#2D3550" VerticalContentAlignment="Center"/>
-                                <TextBox x:Name="TxtGeminiKeyVisible" Height="28" Padding="6,3" Background="#0A0C14" Foreground="#FFFFFF" BorderBrush="#2D3550" VerticalContentAlignment="Center" Visibility="Collapsed"/>
+                                <TextBlock Grid.Column="0" Text="Fournisseur IA :" FontSize="12" FontWeight="SemiBold" Foreground="#CBD5E1" VerticalAlignment="Center" Margin="0,0,8,0"/>
+
+                                <ComboBox x:Name="CmbAiProvider" Grid.Column="1" Height="28" Margin="0,0,12,0" SelectedIndex="0" FontSize="11" Foreground="#0F172A" SelectionChanged="CmbAiProvider_SelectionChanged">
+                                    <ComboBox.ItemContainerStyle>
+                                        <Style TargetType="ComboBoxItem">
+                                            <Setter Property="Foreground" Value="#0F172A"/>
+                                            <Setter Property="Background" Value="#FFFFFF"/>
+                                        </Style>
+                                    </ComboBox.ItemContainerStyle>
+                                    <ComboBoxItem Content="✨ Oxion AI (Recommandé)" Tag="OxionAi"/>
+                                    <ComboBoxItem Content="🌐 Google Gemini" Tag="Gemini"/>
+                                    <ComboBoxItem Content="⚙️ OpenAI / Compatible" Tag="OpenAI"/>
+                                </ComboBox>
+
+                                <TextBlock Grid.Column="2" Text="Modèle :" FontSize="12" FontWeight="SemiBold" Foreground="#CBD5E1" VerticalAlignment="Center" Margin="0,0,8,0"/>
+
+                                <ComboBox x:Name="CmbGeminiModel" Grid.Column="3" Height="28" Margin="0,0,12,0" IsEditable="True" SelectedIndex="0" FontSize="11" Foreground="#0F172A">
+                                    <ComboBox.ItemContainerStyle>
+                                        <Style TargetType="ComboBoxItem">
+                                            <Setter Property="Foreground" Value="#0F172A"/>
+                                            <Setter Property="Background" Value="#FFFFFF"/>
+                                        </Style>
+                                    </ComboBox.ItemContainerStyle>
+                                    <ComboBoxItem Content="gpt-4o-mini"/>
+                                    <ComboBoxItem Content="gpt-4o"/>
+                                    <ComboBoxItem Content="claude-3-5-sonnet"/>
+                                    <ComboBoxItem Content="claude-3-5-haiku"/>
+                                    <ComboBoxItem Content="gemini-2.0-flash"/>
+                                    <ComboBoxItem Content="deepseek-chat"/>
+                                </ComboBox>
+
+                                <TextBlock x:Name="LblAiBaseUrl" Grid.Column="4" Text="Base URL :" FontSize="12" FontWeight="SemiBold" Foreground="#CBD5E1" VerticalAlignment="Center" Margin="0,0,8,0"/>
+
+                                <TextBox x:Name="TxtAiBaseUrl" Grid.Column="5" Height="28" Padding="6,3" Background="#0A0C14" Foreground="#94A3B8" BorderBrush="#2D3550" VerticalContentAlignment="Center" Text="https://oxionai.com/v1" ToolTip="Point d'entrée de l'API"/>
                             </Grid>
 
-                            <Button x:Name="BtnToggleKeyVis" Grid.Column="2" Content="👁️" Width="32" Height="28" Margin="0,0,8,0" Click="BtnToggleKeyVis_Click"
-                                    ToolTip="Afficher / masquer la clé API"/>
+                            <!-- Ligne 2 : Clé API, Sauvegarde et Analyse Globale -->
+                            <Grid Grid.Row="1">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
 
-                            <ComboBox x:Name="CmbGeminiModel" Grid.Column="3" Height="28" Margin="0,0,8,0" SelectedIndex="0" FontSize="11" Foreground="#0F172A">
-                                <ComboBox.ItemContainerStyle>
-                                    <Style TargetType="ComboBoxItem">
-                                        <Setter Property="Foreground" Value="#0F172A"/>
-                                        <Setter Property="Background" Value="#FFFFFF"/>
-                                    </Style>
-                                </ComboBox.ItemContainerStyle>
-                                <ComboBoxItem Content="gemini-2.5-flash"/>
-                                <ComboBoxItem Content="gemini-2.5-pro"/>
-                                <ComboBoxItem Content="gemini-2.0-flash"/>
-                            </ComboBox>
+                                <TextBlock x:Name="LblAiApiKey" Grid.Column="0" Text="Clé API Oxion AI :" FontSize="12" FontWeight="SemiBold" Foreground="#CBD5E1" VerticalAlignment="Center" Margin="0,0,8,0"/>
 
-                            <Button x:Name="BtnSaveGeminiKey" Grid.Column="4" Content="💾 Enregistrer la clé" Click="BtnSaveGeminiKey_Click" Margin="0,0,10,0"/>
+                                <Grid Grid.Column="1" Margin="0,0,6,0">
+                                    <PasswordBox x:Name="PwdGeminiKey" Height="28" Padding="6,3" Background="#0A0C14" Foreground="#FFFFFF" BorderBrush="#2D3550" VerticalContentAlignment="Center" ToolTip="Entrez votre clé API Oxion AI (ex: cc_... depuis oxionai.com)"/>
+                                    <TextBox x:Name="TxtGeminiKeyVisible" Height="28" Padding="6,3" Background="#0A0C14" Foreground="#FFFFFF" BorderBrush="#2D3550" VerticalContentAlignment="Center" Visibility="Collapsed"/>
+                                </Grid>
 
-                            <Button x:Name="BtnAnalyzePcGlobal" Grid.Column="6" Content="✨ Analyser le trafic du PC" Style="{StaticResource BtnGemini}" Padding="14,6" Click="BtnAnalyzePcGlobal_Click"/>
+                                <Button x:Name="BtnToggleKeyVis" Grid.Column="2" Content="👁️" Width="32" Height="28" Margin="0,0,8,0" Click="BtnToggleKeyVis_Click"
+                                        ToolTip="Afficher / masquer la clé API"/>
+
+                                <Button x:Name="BtnSaveGeminiKey" Grid.Column="3" Content="💾 Enregistrer la configuration" Click="BtnSaveGeminiKey_Click" Margin="0,0,10,0" Padding="12,4"/>
+
+                                <Button x:Name="BtnAnalyzePcGlobal" Grid.Column="4" Content="✨ Analyser le trafic du PC" Style="{StaticResource BtnGemini}" Padding="16,6" Click="BtnAnalyzePcGlobal_Click"/>
+                            </Grid>
                         </Grid>
                     </Border>
 
@@ -798,8 +839,8 @@
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
                                 <StackPanel>
-                                    <TextBlock x:Name="TxtGlobalAiTitle" Text="Analyse de sécurité réseau par Gemini" FontSize="14" FontWeight="Bold" Foreground="#FFFFFF"/>
-                                    <TextBlock x:Name="TxtGlobalAiSummary" Text="Entrez votre clé API Gemini puis cliquez sur 'Analyser le trafic du PC' ou sur le bouton '✨ IA' d'une application." FontSize="11" Foreground="#94A3B8" TextWrapping="Wrap" Margin="0,3,0,0"/>
+                                    <TextBlock x:Name="TxtGlobalAiTitle" Text="Analyse de sécurité réseau par IA (Oxion AI / Gemini)" FontSize="14" FontWeight="Bold" Foreground="#FFFFFF"/>
+                                    <TextBlock x:Name="TxtGlobalAiSummary" Text="Configurez votre clé API (Oxion AI ou Gemini) puis cliquez sur 'Analyser le trafic du PC' ou sur le bouton '✨ IA' d'une application." FontSize="11" Foreground="#94A3B8" TextWrapping="Wrap" Margin="0,3,0,0"/>
                                 </StackPanel>
                                 <Border x:Name="GlobalRiskBadge" Grid.Column="1" Background="#1E293B" BorderBrush="#334155" BorderThickness="1" CornerRadius="6" Padding="10,4" VerticalAlignment="Center" Margin="10,0,0,0">
                                     <TextBlock x:Name="TxtGlobalAiRisk" Text="Prêt" FontSize="11" FontWeight="Bold" Foreground="#94A3B8"/>
