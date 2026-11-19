@@ -1,4 +1,4 @@
-<Window x:Class="IpScanConnect.InputDialog"
+﻿<Window x:Class="IpScanConnect.InputDialog"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Saisie" Height="190" Width="420"
@@ -22,9 +22,9 @@
 
         <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Bottom">
             <Button x:Name="BtnCancel" Content="Annuler" Width="80" Height="32" Margin="0,0,8,0"
-                    Background="#1E2337" Foreground="#94A3B8" Click="BtnCancel_Click"/>
+                    Background="#303033" Foreground="#94A3B8" Click="BtnCancel_Click"/>
             <Button x:Name="BtnOk" Content="Valider" Width="80" Height="32"
-                    Background="#2563EB" Foreground="#FFFFFF" FontWeight="Bold" Click="BtnOk_Click"/>
+                    Background="#146BC1" Foreground="#FFFFFF" FontWeight="Bold" Click="BtnOk_Click"/>
         </StackPanel>
     </Grid>
 </Window>

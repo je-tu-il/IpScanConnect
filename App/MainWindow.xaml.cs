@@ -260,6 +260,9 @@ namespace IpScanConnect
                 UpdateAiProviderUi(provider, model);
 
                 ChkWatchMode.IsChecked = s.WatchModeEnabled;
+                ChkTrustInstalled.IsChecked = s.TrustInstalledAppsByDefault;
+                ChkOnlyAlertSuspicious.IsChecked = s.OnlyAlertSuspiciousApps;
+                ChkPreferHostsRedirect.IsChecked = s.PreferHostsRedirectOverDrop;
                 ChkMinimizeTray.IsChecked = s.MinimizeToTrayOnClose;
                 ChkWfpAudit.IsChecked = s.WfpAuditEnabled;
 
@@ -311,6 +314,9 @@ namespace IpScanConnect
 
             bool watchOn = ChkWatchMode.IsChecked == true;
             _settingsService.Current.WatchModeEnabled = watchOn;
+            _settingsService.Current.TrustInstalledAppsByDefault = ChkTrustInstalled.IsChecked == true;
+            _settingsService.Current.OnlyAlertSuspiciousApps = ChkOnlyAlertSuspicious.IsChecked == true;
+            _settingsService.Current.PreferHostsRedirectOverDrop = ChkPreferHostsRedirect.IsChecked == true;
             _settingsService.Current.MinimizeToTrayOnClose = ChkMinimizeTray.IsChecked == true;
             _settingsService.Save();
 
@@ -393,6 +399,48 @@ namespace IpScanConnect
             return false;
         }
 
+        private static bool IsInstalledOrSystemApp(NetworkConnection c)
+        {
+            if (c == null) return false;
+            if (NetworkMonitorService.IsSystemProcess(c.ProcessName, c.ProcessPath)) return true;
+            if (string.IsNullOrEmpty(c.ProcessPath) || c.ProcessPath == "N/A") return false;
+
+            try
+            {
+                string p = c.ProcessPath.ToLowerInvariant();
+                string progFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles).ToLowerInvariant();
+                string progFilesX86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86).ToLowerInvariant();
+                string winDir = Environment.GetFolderPath(Environment.SpecialFolder.Windows).ToLowerInvariant();
+
+                if (p.StartsWith(progFiles) || p.StartsWith(progFilesX86) || p.StartsWith(winDir))
+                    return true;
+            }
+            catch { }
+
+            return false;
+        }
+
+        private static bool IsSuspiciousConnection(NetworkConnection c)
+        {
+            if (c == null) return false;
+            string path = (c.ProcessPath ?? "").ToLowerInvariant();
+
+            // Exécutable dans Temp ou AppData local sans installation standard
+            if (path.Contains("\\temp\\") || path.Contains("\\appdata\\local\\temp\\"))
+                return true;
+
+            // Ports réseau suspects ou anormaux (ex: shells, IRC, botnets)
+            int port = c.RemotePort;
+            if (port == 4444 || port == 5555 || port == 6667 || port == 1337 || port == 31337)
+                return true;
+
+            // Processus sans nom ou sans chemin accédant à Internet
+            if (c.IsInternet && (string.IsNullOrEmpty(c.ProcessName) || string.IsNullOrEmpty(c.ProcessPath) || c.ProcessPath == "N/A"))
+                return true;
+
+            return false;
+        }
+
         private void EvaluateWatchModeDetections(List<NetworkConnection> conns)
         {
             if (!_settingsService.Current.WatchModeEnabled || conns == null || conns.Count == 0)
@@ -411,6 +459,14 @@ namespace IpScanConnect
 
                 string id = GetAppIdentifier(c);
                 if (string.IsNullOrEmpty(id)) continue;
+
+                // Si confiance par défaut aux applications installées (Program Files / Windows)
+                if (_settingsService.Current.TrustInstalledAppsByDefault && IsInstalledOrSystemApp(c))
+                {
+                    _settingsService.MarkAppAsKnown(id);
+                    continue;
+                }
+
                 if (_settingsService.IsKnownApp(id) || _sessionAlertedApps.Contains(id))
                     continue;
 
@@ -419,18 +475,27 @@ namespace IpScanConnect
                     string.IsNullOrEmpty(c.RemoteHost) ? c.RemoteAddress : c.RemoteHost,
                     c.RemotePort);
 
-                AddLog("NOUVELLE APP DETECTEE",
-                    string.Format("Connexion inconnue vers {0} ({1})", target, c.ScopeBadge),
+                bool isSuspicious = IsSuspiciousConnection(c);
+
+                AddLog(isSuspicious ? "ALERTE CONNEXION DOUTEUSE" : "NOUVELLE APP DETECTEE",
+                    string.Format("Connexion vers {0} ({1})", target, c.ScopeBadge),
                     c.ProcessName,
                     target);
 
-                if (_trayIcon != null)
+                // Notification : respecte le filtre "Uniquement les apps douteuses"
+                bool shouldNotify = true;
+                if (_settingsService.Current.OnlyAlertSuspiciousApps && !isSuspicious)
+                {
+                    shouldNotify = false;
+                }
+
+                if (_trayIcon != null && shouldNotify)
                 {
                     _trayIcon.ShowBalloonTip(
                         4000,
-                        "IpScanConnect — Nouvelle connexion détectée",
+                        isSuspicious ? "IpScanConnect — Connexion suspecte !" : "IpScanConnect — Nouvelle connexion détectée",
                         string.Format("{0} vient de se connecter à {1}", c.ProcessName, target),
-                        System.Windows.Forms.ToolTipIcon.Warning);
+                        isSuspicious ? System.Windows.Forms.ToolTipIcon.Warning : System.Windows.Forms.ToolTipIcon.Info);
                 }
             }
         }
@@ -599,6 +664,16 @@ namespace IpScanConnect
         private void RecordBlockedAttempt(BlockedAttempt attempt)
         {
             if (attempt == null) return;
+            if (_blockService != null)
+            {
+                if (!string.IsNullOrEmpty(attempt.ProcessPath) && attempt.ProcessPath != "N/A")
+                    _blockService.RecordHit(attempt.ProcessPath);
+                if (!string.IsNullOrEmpty(attempt.RemoteAddress) && attempt.RemoteAddress != "*")
+                    _blockService.RecordHit(attempt.RemoteAddress);
+                if (!string.IsNullOrEmpty(attempt.MatchedRule))
+                    _blockService.RecordHit(attempt.MatchedRule);
+            }
+
             _blockedAttemptsList.Insert(0, attempt);
             while (_blockedAttemptsList.Count > 400)
             {
@@ -975,10 +1050,17 @@ namespace IpScanConnect
             ProcessGroup pg = btn != null ? btn.Tag as ProcessGroup : null;
             if (pg != null)
             {
-                pg.IsExpanded = true;
-                BtnGroupApps_Click(null, null);
-                ListProcessGroups.ScrollIntoView(pg);
+                TxtTileFluxTitle.Text = string.Format("Flux réseau : {0} (PID {1}) — {2} connexion(s)",
+                    pg.ProcessName, pg.ProcessId, pg.TotalCount);
+                GridTileFluxConnections.ItemsSource = pg.AllConnections;
+                GridTileFluxOverlay.Visibility = Visibility.Visible;
             }
+        }
+
+        private void BtnCloseTileFlux_Click(object sender, RoutedEventArgs e)
+        {
+            GridTileFluxOverlay.Visibility = Visibility.Collapsed;
+            GridTileFluxConnections.ItemsSource = null;
         }
 
         private void BtnGroupCategories_Click(object sender, RoutedEventArgs e)
@@ -1173,6 +1255,23 @@ namespace IpScanConnect
                 MenuItem blockIpItem = new MenuItem { Header = "🛑 Bloquer cette IP (" + conn.RemoteAddress + ")" };
                 blockIpItem.Click += (s, args) => BlockConnectionIp(conn);
                 menu.Items.Add(blockIpItem);
+
+                string targetDomain = !string.IsNullOrEmpty(conn.RemoteHost) ? conn.RemoteHost : conn.RemoteAddress;
+                MenuItem redirectItem = new MenuItem { Header = "🔀 Rediriger vers 127.0.0.1 (Hosts Sinkhole)" };
+                redirectItem.Click += (s, args) =>
+                {
+                    string err;
+                    if (AddOrUpdateRedirectRule(targetDomain, "127.0.0.1", out err))
+                    {
+                        AddLog("REDIRECTION HOSTS", string.Format("Cible {0} redirigée vers 127.0.0.1", targetDomain), conn.ProcessName, targetDomain);
+                        RefreshAll();
+                    }
+                    else
+                    {
+                        MessageBox.Show("Erreur redirection : " + err, "Erreur", MessageBoxButton.OK, MessageBoxImage.Error);
+                    }
+                };
+                menu.Items.Add(redirectItem);
             }
 
             if (!string.IsNullOrEmpty(conn.ProcessPath) && conn.ProcessPath != "N/A" && File.Exists(conn.ProcessPath))
@@ -1371,19 +1470,16 @@ namespace IpScanConnect
                 return;
             }
 
-            MessageBoxResult res = MessageBox.Show(
-                string.Format("Bloquer tout le trafic réseau pour l'application :\n{0}\n({1}) ?", pg.ProcessName, appPath),
+            ShowConfirmDialog(
                 "Confirmation de blocage Application",
-                MessageBoxButton.YesNo,
-                MessageBoxImage.Warning);
-
-            if (res == MessageBoxResult.Yes)
-            {
-                _blockService.BlockApp(appPath);
-                _netMonitor.CloseConnectionsForApp(appPath, _rawConnections);
-                AddLog("BLOCAGE APP", "Application bloquée : " + appPath, pg.ProcessName, appPath);
-                RefreshAll();
-            }
+                string.Format("Bloquer tout le trafic réseau pour l'application :\n{0}\n({1}) ?", pg.ProcessName, appPath),
+                () =>
+                {
+                    _blockService.BlockApp(appPath);
+                    _netMonitor.CloseConnectionsForApp(appPath, _rawConnections);
+                    AddLog("BLOCAGE APP", "Application bloquée : " + appPath, pg.ProcessName, appPath);
+                    RefreshAll();
+                });
         }
 
         private void BtnBlockIpFromRow_Click(object sender, RoutedEventArgs e)
@@ -1403,23 +1499,41 @@ namespace IpScanConnect
                 return;
             }
 
-            MessageBoxResult res = MessageBox.Show(
-                string.Format("Bloquer immédiatement l'adresse IP {0} ?", ip),
-                "Confirmation de blocage IP",
-                MessageBoxButton.YesNo,
-                MessageBoxImage.Warning);
-
-            if (res == MessageBoxResult.Yes)
+            if (_settingsService.Current.PreferHostsRedirectOverDrop && !string.IsNullOrEmpty(conn.RemoteHost) && conn.RemoteHost != ip)
             {
-                _blockService.BlockIp(ip);
-                if (conn.Protocol == "TCP" && conn.IpVersion == "IPv4")
-                {
-                    _netMonitor.CloseTcpConnection(conn.LocalAddress, conn.LocalPort, conn.RemoteAddress, conn.RemotePort);
-                }
-
-                AddLog("BLOCAGE IP", "IP distante bloquée : " + ip, conn.ProcessName, ip);
-                RefreshAll();
+                ShowConfirmDialog(
+                    "Redirection vers 127.0.0.1 (Hosts)",
+                    string.Format("Rediriger les requêtes vers le domaine '{0}' vers 127.0.0.1 au lieu d'un blocage pur ?", conn.RemoteHost),
+                    () =>
+                    {
+                        string err;
+                        if (AddOrUpdateRedirectRule(conn.RemoteHost, "127.0.0.1", out err))
+                        {
+                            AddLog("REDIRECTION HOSTS", string.Format("Domaine {0} redirigé vers 127.0.0.1", conn.RemoteHost), conn.ProcessName, conn.RemoteHost);
+                            RefreshAll();
+                        }
+                        else
+                        {
+                            MessageBox.Show("Erreur redirection : " + err, "Erreur", MessageBoxButton.OK, MessageBoxImage.Error);
+                        }
+                    });
+                return;
             }
+
+            ShowConfirmDialog(
+                "Confirmation de blocage IP",
+                string.Format("Bloquer immédiatement l'adresse IP {0} ?", ip),
+                () =>
+                {
+                    _blockService.BlockIp(ip);
+                    if (conn.Protocol == "TCP" && conn.IpVersion == "IPv4")
+                    {
+                        _netMonitor.CloseTcpConnection(conn.LocalAddress, conn.LocalPort, conn.RemoteAddress, conn.RemotePort);
+                    }
+
+                    AddLog("BLOCAGE IP", "IP distante bloquée : " + ip, conn.ProcessName, ip);
+                    RefreshAll();
+                });
         }
 
         private void BtnCloseTcpFromRow_Click(object sender, RoutedEventArgs e)
@@ -2056,6 +2170,135 @@ namespace IpScanConnect
                 {
                     MessageBox.Show("Erreur export : " + ex.Message, "Erreur", MessageBoxButton.OK, MessageBoxImage.Error);
                 }
+            }
+        }
+
+        #endregion
+
+        #region Helpers & Interactivité UI (Overlays, IA & Mises à jour)
+
+        private bool AddOrUpdateRedirectRule(string sourceDomain, string targetIp, out string error)
+        {
+            error = null;
+            string source = HostsRedirectService.NormalizeHost(sourceDomain);
+            string resolvedIp = HostsRedirectService.ResolveTargetToIp(targetIp);
+            if (string.IsNullOrEmpty(source))
+            {
+                error = "Domaine source invalide.";
+                return false;
+            }
+
+            RedirectRule existing = _redirectRulesList.FirstOrDefault(r => string.Equals(r.SourceDomain, source, StringComparison.OrdinalIgnoreCase));
+            if (existing != null)
+            {
+                existing.TargetAddress = resolvedIp;
+                existing.IsEnabled = true;
+            }
+            else
+            {
+                _redirectRulesList.Add(new RedirectRule
+                {
+                    SourceDomain = source,
+                    TargetAddress = resolvedIp,
+                    IsEnabled = true
+                });
+            }
+
+            SaveAndApplyRedirects();
+            return true;
+        }
+
+        private Action _pendingConfirmAction;
+
+        private void ShowConfirmDialog(string title, string message, Action onConfirm)
+        {
+            TxtConfirmTitle.Text = title;
+            TxtConfirmMessage.Text = message;
+            _pendingConfirmAction = onConfirm;
+            GridConfirmOverlay.Visibility = Visibility.Visible;
+        }
+
+        private void BtnConfirmOk_Click(object sender, RoutedEventArgs e)
+        {
+            GridConfirmOverlay.Visibility = Visibility.Collapsed;
+            Action act = _pendingConfirmAction;
+            _pendingConfirmAction = null;
+            if (act != null) act();
+        }
+
+        private void BtnConfirmCancel_Click(object sender, RoutedEventArgs e)
+        {
+            GridConfirmOverlay.Visibility = Visibility.Collapsed;
+            _pendingConfirmAction = null;
+        }
+
+        private async void BtnTestAiKey_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                ComboBoxItem selItem = CmbAiProvider.SelectedItem as ComboBoxItem;
+                string provider = (selItem != null && selItem.Tag != null) ? selItem.Tag.ToString() : "OxionAi";
+                string key = (TxtGeminiKeyVisible.Visibility == Visibility.Visible ? TxtGeminiKeyVisible.Text : PwdGeminiKey.Password);
+                if (key != null) key = key.Trim();
+                string model = CmbGeminiModel.Text != null ? CmbGeminiModel.Text.Trim() : "";
+                string baseUrl = TxtAiBaseUrl.Text != null ? TxtAiBaseUrl.Text.Trim() : "";
+
+                if (string.IsNullOrEmpty(key))
+                {
+                    MessageBox.Show("Veuillez d'abord saisir une clé API dans le champ.", "Clé requise", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+
+                BtnTestAiKey.IsEnabled = false;
+                BtnTestAiKey.Content = "Test...";
+                string res = await _geminiService.TestApiKeyAsync(key, provider, model, baseUrl);
+                MessageBox.Show(res, "Succès API IA", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Échec du test API :\n" + ex.Message, "Erreur API IA", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            finally
+            {
+                BtnTestAiKey.IsEnabled = true;
+                BtnTestAiKey.Content = "Tester la clé";
+            }
+        }
+
+        private async void BtnCheckUpdates_Click(object sender, RoutedEventArgs e)
+        {
+            BtnCheckUpdates.IsEnabled = false;
+            TxtUpdateStatus.Text = "Vérification en cours...";
+            try
+            {
+                using (System.Net.Http.HttpClient client = new System.Net.Http.HttpClient())
+                {
+                    client.DefaultRequestHeaders.UserAgent.ParseAdd("IpScanConnect-App");
+                    string json = await client.GetStringAsync("https://api.github.com/repos/je-tu-il/IpScanConnect/releases/latest");
+                    System.Web.Script.Serialization.JavaScriptSerializer ser = new System.Web.Script.Serialization.JavaScriptSerializer();
+                    Dictionary<string, object> dict = ser.Deserialize<Dictionary<string, object>>(json);
+                    string tag = dict != null && dict.ContainsKey("tag_name") ? dict["tag_name"].ToString() : "";
+                    if (!string.IsNullOrEmpty(tag) && !tag.Contains("1.0.0"))
+                    {
+                        TxtUpdateStatus.Text = "Nouvelle version : " + tag + " disponible !";
+                        if (dict.ContainsKey("html_url"))
+                        {
+                            Process.Start(new ProcessStartInfo(dict["html_url"].ToString()) { UseShellExecute = true });
+                        }
+                    }
+                    else
+                    {
+                        TxtUpdateStatus.Text = "Vous utilisez la dernière version officielle (v1.0.0).";
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                TxtUpdateStatus.Text = "Vérification indisponible : " + ex.Message;
+            }
+            finally
+            {
+                BtnCheckUpdates.IsEnabled = true;
             }
         }
 

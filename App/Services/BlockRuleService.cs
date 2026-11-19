@@ -20,6 +20,29 @@ namespace IpScanConnect.Services
 
         private List<BlockedRule> _cachedRules;
         private DateTime _cacheUpdatedUtc = DateTime.MinValue;
+        private readonly Dictionary<string, int> _ruleHitCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        public void RecordHit(string targetOrRule)
+        {
+            if (string.IsNullOrEmpty(targetOrRule)) return;
+            lock (_ruleHitCounts)
+            {
+                int current;
+                _ruleHitCounts.TryGetValue(targetOrRule, out current);
+                _ruleHitCounts[targetOrRule] = current + 1;
+            }
+        }
+
+        public int GetHits(string targetOrRule)
+        {
+            if (string.IsNullOrEmpty(targetOrRule)) return 0;
+            lock (_ruleHitCounts)
+            {
+                int count;
+                _ruleHitCounts.TryGetValue(targetOrRule, out count);
+                return count;
+            }
+        }
 
         private const int NET_FW_RULE_DIR_IN = 1;
         private const int NET_FW_RULE_DIR_OUT = 2;
@@ -322,7 +345,8 @@ namespace IpScanConnect.Services
                         RuleType = "Dossier Sandbox",
                         Target = folder,
                         Direction = "Entrant & Sortant (Auto-surveillé)",
-                        CreatedAt = DateTime.Now
+                        CreatedAt = DateTime.Now,
+                        BlockedHits = GetHits(folder) + GetHits("Sandbox: " + folder)
                     });
                 }
             }
@@ -375,6 +399,7 @@ namespace IpScanConnect.Services
                                         bRule.Target = rule.Description ?? name;
                                     }
 
+                                    bRule.BlockedHits = GetHits(bRule.Target) + GetHits(bRule.RuleName);
                                     list.Add(bRule);
                                 }
                             }

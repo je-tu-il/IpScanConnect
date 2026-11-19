@@ -11,6 +11,16 @@ namespace IpScanConnect.Models
         public string Direction { get; set; }// "Entrant & Sortant"
         public DateTime CreatedAt { get; set; }
         public bool IsKernelRule { get; set; }
+        public int BlockedHits { get; set; }
+
+        public string BlockedHitsDisplay
+        {
+            get
+            {
+                if (BlockedHits <= 0) return "0";
+                return string.Format("{0} tentative(s)", BlockedHits);
+            }
+        }
 
         public string DisplayName
         {

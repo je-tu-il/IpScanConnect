@@ -190,6 +190,84 @@ namespace IpScanConnect.Services
             return await SendPromptAsync(apiKey, model, "Trafic Global du PC", "PC Global", prompt, provider, baseUrl);
         }
 
+        public async Task<string> TestApiKeyAsync(string apiKey, string provider, string model, string baseUrl)
+        {
+            if (string.IsNullOrWhiteSpace(apiKey))
+                throw new InvalidOperationException("Veuillez renseigner une clé API avant de tester.");
+
+            bool isGemini = string.Equals(provider, "Gemini", StringComparison.OrdinalIgnoreCase);
+            if (isGemini)
+            {
+                string chosenModel = string.IsNullOrWhiteSpace(model) ? "gemini-2.5-flash" : model.Trim();
+                string url = string.Format(
+                    "https://generativelanguage.googleapis.com/v1beta/models/{0}:generateContent?key={1}",
+                    Uri.EscapeDataString(chosenModel),
+                    Uri.EscapeDataString(apiKey.Trim()));
+
+                JavaScriptSerializer ser = new JavaScriptSerializer();
+                Dictionary<string, object> payload = new Dictionary<string, object>();
+                payload["contents"] = new object[]
+                {
+                    new Dictionary<string, object>
+                    {
+                        { "parts", new object[] { new Dictionary<string, object> { { "text", "Ping. Réponds par un seul mot: OK." } } } }
+                    }
+                };
+
+                string bodyJson = ser.Serialize(payload);
+                using (HttpRequestMessage req = new HttpRequestMessage(HttpMethod.Post, url))
+                {
+                    req.Content = new StringContent(bodyJson, Encoding.UTF8, "application/json");
+                    using (HttpResponseMessage resp = await _httpClient.SendAsync(req))
+                    {
+                        string respText = await resp.Content.ReadAsStringAsync();
+                        if (!resp.IsSuccessStatusCode)
+                        {
+                            string errMsg = ExtractGeminiError(respText, (int)resp.StatusCode);
+                            throw new InvalidOperationException(errMsg);
+                        }
+                        return "Connexion réussie à Google Gemini (" + chosenModel + ").";
+                    }
+                }
+            }
+            else
+            {
+                string chosenModel = string.IsNullOrWhiteSpace(model) ? "gpt-4o-mini" : model.Trim();
+                string root = string.IsNullOrWhiteSpace(baseUrl) ? "https://oxionai.com/v1" : baseUrl.Trim().TrimEnd('/');
+                string url = root + "/chat/completions";
+
+                JavaScriptSerializer ser = new JavaScriptSerializer();
+                Dictionary<string, object> payload = new Dictionary<string, object>();
+                payload["model"] = chosenModel;
+                payload["messages"] = new object[]
+                {
+                    new Dictionary<string, object>
+                    {
+                        { "role", "user" },
+                        { "content", "Ping. Réponds par OK." }
+                    }
+                };
+
+                string bodyJson = ser.Serialize(payload);
+                using (HttpRequestMessage req = new HttpRequestMessage(HttpMethod.Post, url))
+                {
+                    req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey.Trim());
+                    req.Content = new StringContent(bodyJson, Encoding.UTF8, "application/json");
+
+                    using (HttpResponseMessage resp = await _httpClient.SendAsync(req))
+                    {
+                        string respText = await resp.Content.ReadAsStringAsync();
+                        if (!resp.IsSuccessStatusCode)
+                        {
+                            string errMsg = ExtractOpenAiError(respText, (int)resp.StatusCode, provider ?? "Oxion AI");
+                            throw new InvalidOperationException(errMsg);
+                        }
+                        return "Connexion réussie à " + (provider ?? "Oxion AI") + " (" + chosenModel + ").";
+                    }
+                }
+            }
+        }
+
         private async Task<GeminiAnalysisResult> SendPromptAsync(string apiKey, string model, string targetName, string scope, string prompt, string provider, string baseUrl)
         {
             if (string.IsNullOrWhiteSpace(apiKey))

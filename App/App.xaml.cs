@@ -1,15 +1,55 @@
 using System;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Security.Principal;
+using System.Threading;
 using System.Windows;
 
 namespace IpScanConnect
 {
     public partial class App : Application
     {
+        private static Mutex _singleInstanceMutex;
+        private const string MutexName = "Global\\IpScanConnect_SingleInstance_Mutex_JulesR";
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool SetForegroundWindow(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+        private const int SW_RESTORE = 9;
+
         protected override void OnStartup(StartupEventArgs e)
         {
-            // Vérification des privilèges administrateur requis pour le filtrage WFP
+            // 1. Limiter l'application à une seule instance active simultanée
+            bool createdNew;
+            try
+            {
+                _singleInstanceMutex = new Mutex(true, MutexName, out createdNew);
+            }
+            catch
+            {
+                createdNew = false;
+            }
+
+            if (!createdNew)
+            {
+                // Une instance tourne déjà, tenter de ramener sa fenêtre au premier plan
+                IntPtr hWnd = FindWindow(null, "IpScanConnect");
+                if (hWnd != IntPtr.Zero)
+                {
+                    ShowWindow(hWnd, SW_RESTORE);
+                    SetForegroundWindow(hWnd);
+                }
+                Environment.Exit(0);
+                return;
+            }
+
+            // 2. Vérification des privilèges administrateur requis pour le filtrage WFP
             if (!IsAdministrator())
             {
                 try
@@ -47,6 +87,21 @@ namespace IpScanConnect
             };
 
             base.OnStartup(e);
+        }
+
+        protected override void OnExit(ExitEventArgs e)
+        {
+            if (_singleInstanceMutex != null)
+            {
+                try
+                {
+                    _singleInstanceMutex.ReleaseMutex();
+                    _singleInstanceMutex.Dispose();
+                }
+                catch { }
+                _singleInstanceMutex = null;
+            }
+            base.OnExit(e);
         }
 
         private static bool IsAdministrator()
