@@ -1,4 +1,3 @@
-LImiter la possibilité de plusieurs instances en meme temps
 Par defaut les apps déjà installé sont de confiance
 les pop up de confirmation de bloquage ip si possible dans l'ui de l'app
 par defaut aucune notif, mettre un mode douteux uniquement si c'est une app bizarre ou vers une ip blacklist
@@ -9,3 +8,6 @@ Test ia clé api
 Quand une connexion est bloquee, on peut continuer de voir dans les regles de bloquage les tentatives de connexion
 Proposer dans les options une redirection plutot que faire des requetes a tel site
 Verif Maj
+
+
+Quand je le lance une deuxieme fois et l'autre en surveillance j'ai un blackscreen
